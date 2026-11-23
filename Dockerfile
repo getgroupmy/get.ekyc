@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     EKYC_DATA_DIR=/data EKYC_MODELS_DIR=/app/models
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tesseract-ocr libglib2.0-0 \
+ && apt-get install -y --no-install-recommends tesseract-ocr libglib2.0-0 fonts-dejavu-core \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -19,6 +19,7 @@ COPY scripts/download_models.py scripts/
 RUN python scripts/download_models.py /app/models
 
 COPY app ./app
+COPY scripts/benchmark.py scripts/
 
 RUN useradd --uid 10001 --create-home ekyc && mkdir -p /data && chown ekyc /data
 USER ekyc
