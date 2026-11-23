@@ -234,6 +234,44 @@ All thresholds are in `.env.example`.
 If a regulator requires certified eKYC (for example Bank Negara for financial products), use this as the
 first line and add a certified provider for those flows.
 
+## Measuring accuracy on real documents
+
+Every test in this repository uses made-up documents. Before relying on the results, measure them
+on real ones with `scripts/evaluate.py`. It runs each sample through the same checks as the service,
+in its own process only: nothing is uploaded, written to the database, or sent anywhere.
+
+1. **Collect 50–100 cases** from staff or drivers who have agreed in writing to their ID and photos
+   being used for testing. Mix MyKads, passports and licences, and take the photos with phones as users
+   would: some in poor light, some at an angle. Include cases that should fail: an expired document, a
+   selfie of a different person, a photo of a photo.
+2. **Lay them out** like `samples.example/`: one folder per case with `front.jpg`, `selfie.jpg`
+   (plus `back.jpg` and `liveness_1..3.jpg` if you have them), and one row per case in `labels.csv`.
+   `expected` is what an admin decided after looking at the case. `full_name`, `document_number`,
+   `date_of_birth` and `expiry_date` are the true values from the document. Give each person one
+   `person_id`.
+3. **Run it** on the Mac mini, from a checkout:
+
+```bash
+EKYC_MODELS_DIR=models python scripts/evaluate.py samples --out eval-out
+```
+
+4. **Read `eval-out/report.md`**:
+   - How often the engine wrongly approved or wrongly rejected a case.
+   - How many cases it left for a person to decide.
+   - Which reasons fire on genuine people.
+   - How often each field was read correctly.
+   - A face-threshold table of false rejects against false accepts.
+   - The cases to look at first.
+
+   `results.csv` has one row per case. Neither file contains names, numbers or dates unless you
+   add `--show-values`.
+5. **Delete the samples** when you are done. `samples/` and `eval-out/` are in `.gitignore` so they
+   are never committed. Keep them off shared drives.
+
+The script judges the engine's own verdict (as if `EKYC_AUTO_APPROVE=true`), so the numbers show how
+much of an admin's work it could take over, whatever the setting in production. Re-run it after
+changing a threshold. Small samples give rough signs, not rates, and the report says so.
+
 ## Optional: passive anti-spoof model
 
 The service can also score each selfie with the MobileNetV2 liveness model from

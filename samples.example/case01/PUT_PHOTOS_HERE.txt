@@ -1,0 +1,5 @@
+front.jpg      the ID or passport photo page (required)
+back.jpg       the back of an ID card (optional)
+selfie.jpg     the selfie (required)
+liveness_1.jpg liveness_2.jpg liveness_3.jpg
+               head-turn frames in the order given by liveness_order (optional)
