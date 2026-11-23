@@ -91,6 +91,7 @@ class Media(Base):
     kind: Mapped[str] = mapped_column(String(30))
     path: Mapped[str] = mapped_column(String(300))
     sha256: Mapped[str] = mapped_column(String(64))
+    phash: Mapped[str | None] = mapped_column(String(16), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     verification: Mapped[Verification] = relationship(back_populates="media")
@@ -151,7 +152,10 @@ def _migrate(engine) -> None:  # noqa: ANN001
     from sqlalchemy import inspect, text
 
     cols = {c["name"] for c in inspect(engine).get_columns("verifications")}
+    media_cols = {c["name"] for c in inspect(engine).get_columns("media")}
     with engine.begin() as conn:
+        if "phash" not in media_cols:
+            conn.execute(text("ALTER TABLE media ADD COLUMN phash VARCHAR(16)"))
         if "is_test" not in cols:
             conn.execute(text("ALTER TABLE verifications ADD COLUMN is_test BOOLEAN NOT NULL DEFAULT 0"))
             # Runs made from the console before tests were marked

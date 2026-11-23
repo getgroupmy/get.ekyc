@@ -11,9 +11,10 @@ from sqlalchemy.orm import Session
 
 from . import crypto, storage, webhooks
 from .config import get_settings
-from .db import Verification, audit, session_scope, utcnow
+from .db import Media, Verification, audit, session_scope, utcnow
 from .pipeline import face as facelib
 from .pipeline import images, runner
+from .pipeline import integrity
 from .pipeline.checks import PASS, REVIEW, check
 
 log = logging.getLogger("ekyc.service")
@@ -76,6 +77,20 @@ def _duplicates(db: Session, v: Verification, embedding: np.ndarray | None, doc_
             if facelib.similarity(embedding, np.frombuffer(other.face_embedding, np.float32)) >= s.duplicate_face_threshold:
                 hits.append(other.id)
                 code = code or "duplicate_face"
+    # the same photo already used by someone else (resized or recompressed counts)
+    mine = {m.kind: m.phash for m in v.media if m.phash}
+    if mine:
+        others = db.execute(select(Media.phash, Media.kind, Verification.id, Verification.external_ref)
+                            .join(Verification, Media.verification_id == Verification.id)
+                            .where(Verification.client_id == v.client_id, Verification.id != v.id,
+                                   Verification.is_test.is_(bool(v.is_test)), Media.phash.is_not(None))).all()
+        for ph, kind, oid, oref in others:
+            if v.external_ref and oref == v.external_ref:
+                continue
+            if any(integrity.hamming(ph, h) <= integrity.SAME_IMAGE for h in mine.values()):
+                if oid not in hits:
+                    hits.append(oid)
+                code = code or "image_reused"
     if hits:
         return check("duplicate", REVIEW, code, matches=hits[:10])
     return check("duplicate", PASS)

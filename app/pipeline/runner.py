@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from ..config import get_settings
-from . import catalog, document, images, liveness
+from . import catalog, document, images, integrity, liveness
 from . import face as facelib
 from .checks import FAIL, PASS, REVIEW, SKIPPED, check, overall
 
@@ -68,6 +68,9 @@ def run(media: dict[str, bytes], document_type: str, country: str | None, claime
         sim = facelib.similarity(selfie_emb, doc.face_embedding)
         scores["face_match"] = round(sim, 4)
         detail = {"similarity": round(sim, 4), "threshold": s.face_match_threshold}
+        copy = integrity.selfie_copy_check(sim)
+        if copy:
+            checks.append(copy)
         if sim >= s.face_match_threshold:
             checks.append(check("face_match", PASS, **detail))
         elif sim >= s.face_review_threshold:
@@ -83,5 +86,6 @@ def run(media: dict[str, bytes], document_type: str, country: str | None, claime
                   if f"liveness_{i + 1}" in media]
         checks.append(liveness.active(frames, challenge, selfie_emb))
 
+    checks.append(integrity.edited_check(media))
     status, reasons = overall(checks, s.auto_approve)
     return Outcome(status, reasons, checks, doc.extracted, scores, selfie_emb, doc.document_number)

@@ -10,7 +10,7 @@ from .. import crypto, service, storage, webhooks
 from ..auth import new_api_key, require_admin
 from ..config import get_settings
 from ..db import ApiClient, AuditLog, Media, SampleDoc, Verification, audit, get_db, utcnow
-from ..pipeline import catalog, images, mykad
+from ..pipeline import catalog, images, integrity, mykad
 from ..pipeline.detect import detect as detect_document
 from ..schemas import CreateClient, Decision, verification_out
 
@@ -333,7 +333,8 @@ async def try_verification(
     db.flush()
     for kind, data in media.items():
         mid = "med_" + secrets.token_hex(12)
-        v.media.append(Media(id=mid, kind=kind, path=storage.save(v.id, mid, data), sha256=crypto.sha256_hex(data)))
+        v.media.append(Media(id=mid, kind=kind, path=storage.save(v.id, mid, data), sha256=crypto.sha256_hex(data),
+                           phash=integrity.phash(data)))
     v.status = "processing"
     v.submitted_at = utcnow()
     audit(db, "admin", "verification.console_test", v.id, detail=c.id)

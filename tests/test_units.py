@@ -71,3 +71,28 @@ def test_tesseract_found_without_path(monkeypatch, tmp_path):
     assert pytesseract.pytesseract.tesseract_cmd == str(fake)
     monkeypatch.setattr(ocr, "_TESSERACT_PLACES", (str(tmp_path / "missing"),))
     assert not ocr.available()
+
+
+def test_perceptual_hash_survives_recompression_not_other_images():
+    import cv2
+    from app.pipeline import integrity
+    from tests import synth
+    a = synth.jpeg(synth.face_bgr())
+    small = cv2.imencode(".jpg", cv2.resize(synth.face_bgr(), (300, 300)), [cv2.IMWRITE_JPEG_QUALITY, 60])[1].tobytes()
+    other = synth.passport_image(synth.td3_lines(), None)
+    assert integrity.hamming(integrity.phash(a), integrity.phash(small)) <= integrity.SAME_IMAGE
+    assert integrity.hamming(integrity.phash(a), integrity.phash(other)) > integrity.SAME_IMAGE
+
+
+def test_editor_in_metadata_is_flagged():
+    import io
+    from PIL import Image
+    from app.pipeline import integrity
+    im = Image.new("RGB", (64, 64), "white")
+    exif = im.getexif(); exif[0x0131] = "Adobe Photoshop 25.0"
+    buf = io.BytesIO(); im.save(buf, "JPEG", exif=exif.tobytes())
+    assert integrity.editor_used(buf.getvalue()) == "Photoshop"
+    clean = io.BytesIO(); im.save(clean, "JPEG")
+    assert integrity.editor_used(clean.getvalue()) is None
+    assert integrity.edited_check({"selfie": buf.getvalue()})["code"] == "image_edited"
+    assert integrity.selfie_copy_check(0.97)["code"] == "selfie_is_id_photo" and integrity.selfie_copy_check(0.7) is None

@@ -12,7 +12,7 @@ from .. import crypto, service, storage
 from ..auth import require_client
 from ..config import get_settings
 from ..db import ApiClient, Media, Verification, audit, get_db, utcnow
-from ..pipeline import images, liveness, mykad
+from ..pipeline import images, integrity, liveness, mykad
 from ..schemas import CreateVerification, verification_out
 
 router = APIRouter(prefix="/v1/verifications", tags=["verifications"])
@@ -96,7 +96,8 @@ async def upload(vid: str, kind: str, file: UploadFile = File(...),
         v.media.remove(old)
     db.flush()
     mid = "med_" + secrets.token_hex(12)
-    v.media.append(Media(id=mid, kind=kind, path=storage.save(v.id, mid, data), sha256=crypto.sha256_hex(data)))
+    v.media.append(Media(id=mid, kind=kind, path=storage.save(v.id, mid, data), sha256=crypto.sha256_hex(data),
+                           phash=integrity.phash(data)))
     db.flush()
     return {"kind": kind, "quality": images.quality(img), "uploaded_media": sorted(m.kind for m in v.media)}
 

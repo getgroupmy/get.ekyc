@@ -255,3 +255,18 @@ def test_client_usage_counts_and_permanent_delete(client, api_key, need_models):
     row = next(c for c in client.get("/admin/api/clients", headers=ADMIN).json()["items"] if c["id"] == used["id"])
     assert row["uses"] == 1 and row["approved"] + row["review"] + row["rejected"] == 1 and not row["deletable"]
     assert client.delete(f"/admin/api/clients/{used['id']}/permanent", headers=ADMIN).status_code == 409
+
+
+def test_reused_photo_under_another_user_goes_to_review(client, api_key, need_models):
+    import cv2
+    voc_lines = ["SIJIL PEMILIKAN KENDERAAN", "No. Pendaftaran: JKL 4321", "Tahun Dibuat: 2020"]
+    first = synth.card_image(None, voc_lines)
+    a = _run(client, api_key, {"document_type": "vehicle_registration", "external_ref": "owner-a"}, {"document_front": first})
+    assert a["status"] == "approved", a["reasons"]
+    # the same photo, shrunk and recompressed, sent for someone else
+    img = cv2.imdecode(__import__("numpy").frombuffer(first, "uint8"), 1)
+    again = cv2.imencode(".jpg", cv2.resize(img, None, fx=0.7, fy=0.7), [cv2.IMWRITE_JPEG_QUALITY, 70])[1].tobytes()
+    b = _run(client, api_key, {"document_type": "vehicle_registration", "external_ref": "owner-b"}, {"document_front": again})
+    assert b["status"] == "review" and "image_reused" in b["reasons"]
+    for v in (a, b):
+        client.delete(f"{BASE}/{v['id']}", headers=api_key)
