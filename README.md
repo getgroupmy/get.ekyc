@@ -112,10 +112,12 @@ Checked against `getgroupmy/get-ride` main on 23 Nov 2026. get-ride already runs
 | Name / IC against the profile | `mismatch` (`name`, `ic`) | Same idea, with fuzzy name matching |
 | Selfie against ID photo | `face-compare`: NAS face-server, then AWS, then in-browser → `face_score`, `face_state` | Same models and threshold, plus `/compare` so it can be the NAS step |
 | Same person or ID on two accounts | Not checked | Duplicate document and duplicate face across users |
-| Decision | Admin approves or rejects; the score is advisory | Same by default (`EKYC_AUTO_APPROVE=false`) |
+| Decision | Admin approves or rejects; the score is advisory, except the rider ID gate (0343), which auto-verifies a rider above the country's `autoVerifyScore` | Same by default (`EKYC_AUTO_APPROVE=false`). `/compare` keeps face-server's score scale exactly, because that gate reads it |
 
 The rule in get-ride's `docs/NAS.md` applies: get.ride must keep working when the NAS is off, so
 everything here is a second opinion that can be missing, never a gate the app waits on.
+
+Merge `getgroupmy/get-ride#785` first: until `face-compare` is deployed without the gateway JWT check, the database's own calls to it are refused, whichever face server it points at.
 
 The smallest useful first step needs no app change: point the Face match server key at this
 service's `/compare`. A full integration would add a get-ride edge function that, after an
