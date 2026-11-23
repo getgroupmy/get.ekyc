@@ -178,3 +178,36 @@ def test_mrz_noise_with_two_lucky_check_digits_is_ignored():
     parsed = mrz.parse_td2(l1, l2)
     assert parsed["valid_count"] == 2 and not parsed["checks"]["composite"]
     assert mrz.find_mrz(f"{l1}\n{l2}") is None
+
+
+# --- issuing country from the image ----------------------------------------------------
+from app.pipeline import country as countrylib  # noqa: E402
+
+
+def test_country_from_a_mykad_without_being_told():
+    front = images.decode(synth.mykad_front("900514-10-5232", NAME, ADDRESS, "PEREMPUAN", synth.face_bgr()))
+    res = document.analyze(front, None, "national_id", None, {}, today=date(2026, 11, 23))
+    assert res.extracted["country"] == "MYS" and res.extracted["country_source"] == "mykad_number"
+    assert _check(res, "document_country")["status"] == "pass"
+
+
+def test_country_from_a_passport_mrz_and_a_wrong_request():
+    doc = images.decode(synth.passport_image(synth.td3_lines(), synth.face_bgr()))
+    res = document.analyze(doc, None, "passport", "MYS", {}, today=date(2026, 11, 23))
+    c = _check(res, "document_country")
+    assert c["status"] == "review" and c["code"] == "issuing_country_mismatch"
+    assert c["detail"]["detected"] == "UTO" and c["detail"]["source"] == "mrz"
+
+
+def test_country_from_printed_wording():
+    card = images.decode(synth.card_image(synth.face_bgr(), ["REPUBLIC OF SINGAPORE", "IDENTITY CARD NO", "S1234567D", "TAN AH KOW"]))
+    res = document.analyze(card, None, "national_id", "MYS", {}, today=date(2026, 11, 23))
+    c = _check(res, "document_country")
+    assert c["detail"]["detected"] == "SGP" and c["code"] == "issuing_country_mismatch"
+
+
+def test_wording_rules():
+    assert countrylib.from_wording(["KAD PENGENALAN\nMALAYSIA\nWARGANEGARA"])[0] == "MYS"
+    assert countrylib.from_wording(["REPUBLIK INDONESIA\nPROVINSI JAWA BARAT"])[0] == "IDN"
+    assert countrylib.from_wording(["MALAYSIA"])[0] is None          # one weak word is not enough
+    assert countrylib.from_wording(["JALAN SINGAPORE 5\nKAD PENGENALAN MALAYSIA"])[0] == "MYS"

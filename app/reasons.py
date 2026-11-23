@@ -7,6 +7,7 @@ MESSAGES = {
     "mrz_checksum_failed": "The machine readable lines could not be validated.",
     "document_type_mismatch": "The document does not look like the selected document type.",
     "issuing_country_mismatch": "The document was issued by a different country than selected.",
+    "country_not_identified": "The issuing country could not be read from the document.",
     "id_number_not_found": "We could not read the ID number. Retake the photo in good light.",
     "id_number_uncertain": "The ID number could not be read with confidence. A person will check it.",
     "id_number_front_back_mismatch": "The number on the front of the card does not match the back.",

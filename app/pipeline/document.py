@@ -11,6 +11,7 @@ from rapidfuzz import fuzz
 
 from ..config import get_settings
 from . import face as facelib
+from . import country as countrylib
 from . import images, mrz, mykad, names, ocr
 from .checks import FAIL, PASS, REVIEW, SKIPPED, check
 
@@ -102,11 +103,16 @@ def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, coun
     else:
         side_texts = [ocr.read_texts(img) for img in sides]
         text = "\n".join(t for texts in side_texts for t in texts)
-        if document_type == "national_id" and country is None:
-            # No country given: a confidently read NRIC number makes it a MyKad.
-            probe = mykad.read_card(side_texts[0], side_texts[1] if len(side_texts) > 1 else None)
-            if probe and probe["confident"]:
-                country = "MYS"
+        requested = country
+        all_texts = [t for texts in side_texts for t in texts]
+        if country is None and document_type != "passport":
+            # No country given: printed wording, or a confidently read NRIC
+            # number, decides which reader to use.
+            country = countrylib.from_wording(all_texts)[0]
+            if country is None and document_type == "national_id":
+                probe = mykad.read_card(side_texts[0], side_texts[1] if len(side_texts) > 1 else None)
+                if probe and probe["confident"]:
+                    country = "MYS"
         is_mykad = country == "MYS" and document_type == "national_id"
         # A MyKad has no machine readable zone: never look for one, or OCR noise
         # on its patterned background can pass for a broken MRZ.
@@ -146,9 +152,6 @@ def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, coun
                 res.checks.append(check("document_data", REVIEW, "mrz_checksum_failed", **detail))
             elif document_type == "passport" and not found_mrz["document_code"].startswith("P"):
                 res.checks.append(check("document_data", REVIEW, "document_type_mismatch", **detail))
-            elif country and found_mrz["issuing_country"] != country:
-                res.checks.append(check("document_data", REVIEW, "issuing_country_mismatch",
-                                        issuing_country=found_mrz["issuing_country"], **detail))
             else:
                 definitive = True
                 res.checks.append(check("document_data", PASS, **detail))
@@ -159,6 +162,19 @@ def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, coun
             res.checks.append(check("document_data", PASS, note="verified against claimed data only"))
         else:
             res.checks.append(check("document_data", REVIEW, "no_machine_readable_data"))
+        found = countrylib.detect(all_texts, mrz_country=found_mrz["issuing_country"] if found_mrz and found_mrz["valid"] else None,
+                                  mykad_confident=bool(card and card["confident"]))
+        if found["country"]:
+            extracted["country"] = found["country"]
+            extracted["country_source"] = found["source"]
+            if requested and requested != found["country"]:
+                res.checks.append(check("document_country", REVIEW, "issuing_country_mismatch",
+                                        requested=requested, detected=found["country"], source=found["source"]))
+            else:
+                res.checks.append(check("document_country", PASS, detected=found["country"], source=found["source"]))
+        else:
+            res.checks.append(check("document_country", SKIPPED, "country_not_identified",
+                                    requested=requested))
     res.extracted = extracted
     res.document_number = extracted.get("document_number") or claimed.get("document_number")
 

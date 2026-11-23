@@ -11,7 +11,8 @@ No images or personal data leave your hardware, and there are no per-check fees.
 | **Document quality** | Resolution, blur, brightness and glare, with a "retake" reason for the app |
 | **Document portrait** | Finds the photo on the ID, at any rotation |
 | **Passport / ID data** | Reads the machine readable zone (ICAO 9303 TD1/TD2/TD3) and validates every check digit, which catches altered numbers and dates |
-| **Malaysian MyKad** | Reads the NRIC number, validates the date and place-of-birth code, derives date of birth and gender |
+| **Malaysian MyKad** | Removes the blue security pattern, reads the IC number several times on both sides and votes; date and state of birth and gender come from the number and are checked against LELAKI/PEREMPUAN and the back of the card. Also reads the name, citizenship and address (the religion some cards print is not read: PDPA sensitive data) |
+| **Issuing country** | Detected from the image: the MRZ issuing state, a MyKad number, or the printed wording (MYS, SGP, IDN, THA, PHL, BRN, IND, BGD, NPL, MMR, VNM, CHN, PAK). The `country` you send is optional; if it disagrees, the case goes to review |
 | **Expiry and age** | Rejects expired documents and users under `EKYC_MIN_AGE` |
 | **Entered data vs document** | Name, document number and date of birth the user typed are compared with the document |
 | **Selfie quality** | One clear face, large enough |
