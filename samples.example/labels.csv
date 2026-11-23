@@ -1,4 +1,4 @@
-case_id,person_id,document_type,country,expected,full_name,document_number,date_of_birth,expiry_date,liveness_order
-case01,staff-a,national_id,MYS,approve,ALI BIN ABU,900514-10-5231,1990-05-14,,"center,left,right"
-case02,staff-a,passport,MYS,approve,ALI BIN ABU,A12345678,1990-05-14,2030-01-31,
-case03,staff-b,national_id,MYS,reject,SITI BINTI HASSAN,880101-14-5678,1988-01-01,,
+case_id,person_id,document_type,country,expected,full_name,document_number,date_of_birth,expiry_date,liveness_order,address
+case01,staff-a,national_id,MYS,approve,ALI BIN ABU,900514-10-5231,1990-05-14,,"center,left,right","12 JALAN MAWAR 3, TAMAN MAWAR, 43000 KAJANG, SELANGOR"
+case02,staff-a,passport,MYS,approve,ALI BIN ABU,A12345678,1990-05-14,2030-01-31,,
+case03,staff-b,national_id,MYS,reject,SITI BINTI HASSAN,880101-14-5678,1988-01-01,,,

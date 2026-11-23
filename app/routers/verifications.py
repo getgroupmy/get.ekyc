@@ -12,7 +12,7 @@ from .. import crypto, service, storage
 from ..auth import require_client
 from ..config import get_settings
 from ..db import ApiClient, Media, Verification, audit, get_db, utcnow
-from ..pipeline import images, liveness
+from ..pipeline import images, liveness, mykad
 from ..schemas import CreateVerification, verification_out
 
 router = APIRouter(prefix="/v1/verifications", tags=["verifications"])
@@ -35,6 +35,12 @@ def _open(v: Verification) -> None:
 @router.post("", status_code=201)
 def create(body: CreateVerification, client: ApiClient = Depends(require_client), db: Session = Depends(get_db)):
     s = get_settings()
+    typed = body.claimed.document_number if body.claimed else None
+    if typed and (body.country or "").upper() == "MYS" and body.document_type == "national_id":
+        # Dashes and spaces are fine; the number itself must be a real NRIC.
+        if not mykad.parse_number(typed):
+            raise HTTPException(422, "MyKad number must be 12 digits, YYMMDD-PB-####, with a real date of "
+                                     "birth and place-of-birth code (dashes optional)")
     live = s.liveness_default if body.require_liveness is None else body.require_liveness
     v = Verification(
         id="ver_" + secrets.token_hex(12), client_id=client.id, external_ref=body.external_ref,

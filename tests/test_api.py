@@ -134,6 +134,15 @@ def test_mykad(client, api_key, need_models):
     assert ex["date_of_birth"] == "1990-05-14" and ex["sex"] == "F" and ex["place_of_birth"] == "Selangor"
 
 
+def test_typed_mykad_number_must_be_valid(client, api_key):
+    r = client.post(BASE, json={"document_type": "national_id", "country": "MYS",
+                                "claimed": {"document_number": "8308256367"}}, headers=api_key)
+    assert r.status_code == 422 and "12 digits" in r.text
+    ok = client.post(BASE, json={"document_type": "national_id", "country": "MYS",
+                                 "claimed": {"document_number": "830825086367"}}, headers=api_key)
+    assert ok.status_code == 201
+
+
 def test_driving_licence_without_claims_goes_to_review(client, api_key, need_models):
     card = synth.card_image(synth.face_bgr(), ["DRIVING LICENCE", "CLASS D", "VALID"])
     v = _run(client, api_key, {"document_type": "driving_licence"},

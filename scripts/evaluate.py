@@ -22,7 +22,7 @@ labels.csv columns (only case_id, document_type and expected are required):
     document_type    passport | national_id | driving_licence
     country          ISO alpha-3, e.g. MYS
     expected         what a person decided: approve | reject
-    full_name, document_number, date_of_birth (YYYY-MM-DD), expiry_date
+    full_name, document_number, date_of_birth (YYYY-MM-DD), expiry_date, address
                      the true values from the document, for field accuracy;
                      also sent as what the user "typed", like the app does
     liveness_order   e.g. center,left,right - the order the frames were taken in
@@ -58,7 +58,7 @@ os.environ["EKYC_AUTO_APPROVE"] = "true"
 import numpy as np  # noqa: E402
 from rapidfuzz import fuzz  # noqa: E402
 
-FIELDS = ("full_name", "document_number", "date_of_birth", "expiry_date")
+FIELDS = ("full_name", "document_number", "date_of_birth", "expiry_date", "address")
 DOC_TYPES = ("passport", "national_id", "driving_licence")
 THRESHOLDS = (0.25, 0.30, 0.33, 0.363, 0.40, 0.45, 0.50, 0.55, 0.60)
 
@@ -99,6 +99,8 @@ def field_correct(name: str, truth: str, read: str | None) -> bool | None:
         return None
     if name == "full_name":
         return fuzz.token_set_ratio(truth.upper(), read.upper()) >= 90
+    if name == "address":
+        return fuzz.token_set_ratio(truth.upper(), read.upper()) >= 85
     if name == "document_number":
         return _norm_id(truth) == _norm_id(read)
     return truth.strip() == read.strip()
@@ -157,7 +159,7 @@ def run_case(case: Case) -> Outcome:
         if all(frames):
             challenge = case.liveness_order
             media.update({f"liveness_{i + 1}": f for i, f in enumerate(frames)})
-    claimed = {k: v for k, v in case.truth.items() if k in ("full_name", "document_number", "date_of_birth")}
+    claimed = {k: v for k, v in case.truth.items() if k in ("full_name", "document_number", "date_of_birth", "address")}
     t = time.perf_counter()
     try:
         r = runner.run(media, case.document_type, case.country, claimed or None, challenge)

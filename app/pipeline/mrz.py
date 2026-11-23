@@ -170,6 +170,8 @@ def find_mrz(text: str) -> dict | None:
             f = [_fit(x, 30) for x in lines[i:i + 3]]
             if all(f):
                 consider(parse_td1(*f))  # type: ignore[arg-type]
-    if best and best["valid_count"] == 0:
+    # One passing check digit happens by chance in noise (1 in 10); a real MRZ
+    # read even badly passes at least two.
+    if best and best["valid_count"] < 2:
         return None
     return best

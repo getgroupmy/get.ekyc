@@ -11,7 +11,7 @@ from rapidfuzz import fuzz
 
 from ..config import get_settings
 from . import face as facelib
-from . import images, mrz, mykad, ocr
+from . import images, mrz, mykad, names, ocr
 from .checks import FAIL, PASS, REVIEW, SKIPPED, check
 
 MIN_SHORT_SIDE = 480
@@ -24,6 +24,8 @@ class DocumentResult:
     extracted: dict = field(default_factory=dict)
     face_embedding: np.ndarray | None = None
     document_number: str | None = None
+    candidates: list[str] = field(default_factory=list)  # other numbers OCR read, most likely first
+    name_readings: list[str] = field(default_factory=list)  # every name OCR read on the card
 
 
 def _norm_id(s: str) -> str:
@@ -98,11 +100,37 @@ def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, coun
     if not ocr.available():
         res.checks.append(check("document_data", REVIEW, "ocr_unavailable"))
     else:
-        text = "\n".join(ocr.read_text(img) for img in sides)
-        found_mrz = _read_mrz(sides[::-1]) if document_type in ("passport", "national_id") else None
-        ic = mykad.find_in_text(text) if country == "MYS" and document_type != "passport" else None
+        is_mykad = country == "MYS" and document_type == "national_id"
+        side_texts = [ocr.read_texts(img) for img in sides]
+        text = "\n".join(t for texts in side_texts for t in texts)
+        # A MyKad has no machine readable zone: never look for one, or OCR noise
+        # on its patterned background can pass for a broken MRZ.
+        found_mrz = _read_mrz(sides[::-1]) if document_type in ("passport", "national_id") and not is_mykad else None
+        card = (mykad.read_card(side_texts[0], side_texts[1] if len(side_texts) > 1 else None)
+                if country == "MYS" and document_type != "passport" else None)
 
-        if found_mrz:
+        if card:
+            extracted = {k: card[k] for k in ("document_number", "full_name", "date_of_birth", "sex",
+                                              "place_of_birth", "citizenship", "address", "postcode",
+                                              "city", "state") if card.get(k)}
+            extracted["source"] = "mykad"
+            detail = {"id_format": "MyKad", "votes": card["votes"]}
+            definitive = card["confident"]
+            if (card["front_number"] and card["back_number"]
+                    and card["front_number"] != card["back_number"]):
+                res.checks.append(check("document_data", REVIEW, "id_number_front_back_mismatch", **detail))
+            elif not card["confident"]:
+                res.checks.append(check("document_data", REVIEW, "id_number_uncertain", **detail))
+            elif card["printed_sex"] and card["printed_sex"] != card["sex"]:
+                res.checks.append(check("document_data", REVIEW, "gender_mismatch", printed=card["printed_sex"],
+                                        from_number=card["sex"], **detail))
+            else:
+                res.checks.append(check("document_data", PASS, **detail))
+            res.candidates = card["candidates"]
+            res.name_readings = card["name_readings"]
+        elif is_mykad:
+            res.checks.append(check("document_data", FAIL, "id_number_not_found"))
+        elif found_mrz:
             extracted = {k: found_mrz.get(k) for k in (
                 "document_number", "surname", "given_names", "date_of_birth", "expiry_date", "sex",
                 "nationality", "issuing_country", "personal_number")}
@@ -121,12 +149,6 @@ def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, coun
                 res.checks.append(check("document_data", PASS, **detail))
         elif document_type == "passport":
             res.checks.append(check("document_data", FAIL, "mrz_not_found"))
-        elif ic:
-            extracted = {**ic, "source": "mykad_number"}
-            definitive = True
-            res.checks.append(check("document_data", PASS, id_format="MyKad"))
-        elif country == "MYS" and document_type == "national_id":
-            res.checks.append(check("document_data", FAIL, "id_number_not_found"))
         elif claimed.get("document_number") or claimed.get("full_name"):
             extracted = {"source": "ocr_text"}
             res.checks.append(check("document_data", PASS, note="verified against claimed data only"))
@@ -140,6 +162,8 @@ def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, coun
     if exp:
         expired = date.fromisoformat(exp) < today
         res.checks.append(check("document_expiry", FAIL if expired else PASS, "document_expired", expiry_date=exp))
+    elif extracted.get("source") == "mykad":
+        res.checks.append(check("document_expiry", SKIPPED, "no_expiry_on_document"))
     else:
         res.checks.append(check("document_expiry", SKIPPED, "expiry_not_readable"))
 
@@ -153,11 +177,13 @@ def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, coun
 
     # 6. claimed data vs document ---------------------------------------------
     if claimed and text:
-        res.checks.append(_match_claimed(claimed, extracted, text, definitive, s.name_match_threshold))
+        res.checks.append(_match_claimed(claimed, extracted, text, definitive, s.name_match_threshold,
+                                         res.candidates, res.name_readings))
     return res
 
 
-def _match_claimed(claimed: dict, extracted: dict, text: str, definitive: bool, name_thr: int) -> dict:
+def _match_claimed(claimed: dict, extracted: dict, text: str, definitive: bool, name_thr: int,
+                   candidates: list[str] | None = None, name_readings: list[str] | None = None) -> dict:
     flat = " ".join(text.upper().split())
     compared: dict = {}
     worst = PASS
@@ -170,12 +196,14 @@ def _match_claimed(claimed: dict, extracted: dict, text: str, definitive: bool, 
 
     name = (claimed.get("full_name") or "").upper().strip()
     if name:
-        if extracted.get("full_name"):
-            score = fuzz.token_set_ratio(name, extracted["full_name"].upper())
+        readings = list(name_readings or []) + ([extracted["full_name"]] if extracted.get("full_name") else [])
+        if readings:
+            ok, score = names.match(name, readings)
         else:
-            score = fuzz.partial_ratio(name, flat)
-        compared["full_name_score"] = round(score)
-        if score < name_thr:
+            score = round(fuzz.partial_ratio(name, flat))
+            ok = score >= name_thr
+        compared["full_name_score"] = score
+        if not ok:
             flag(REVIEW, "name_mismatch")
 
     number = _norm_id(claimed.get("document_number") or "")
@@ -184,7 +212,21 @@ def _match_claimed(claimed: dict, extracted: dict, text: str, definitive: bool, 
         ok = number == ex if ex else number in _norm_id(flat)
         compared["document_number_match"] = ok
         if not ok:
-            flag(FAIL if (definitive and ex) else REVIEW, "document_number_mismatch")
+            # Fail only when the reading was certain and the typed number was not
+            # even among the other readings; otherwise let a person look.
+            seen = number in {_norm_id(c) for c in candidates or []}
+            flag(FAIL if (definitive and ex and not seen) else REVIEW, "document_number_mismatch")
+
+    typed_address = (claimed.get("address") or "").upper().strip()
+    if typed_address and extracted.get("address"):
+        # Review, never reject: many people move without updating their MyKad.
+        score = fuzz.token_set_ratio(typed_address, extracted["address"].upper())
+        compared["address_score"] = round(score)
+        typed_postcode = re.search(r"(?<!\d)\d{5}(?!\d)", typed_address)
+        if typed_postcode and extracted.get("postcode"):
+            compared["postcode_match"] = typed_postcode.group() == extracted["postcode"]
+        if score < 70 or compared.get("postcode_match") is False:
+            flag(REVIEW, "address_mismatch")
 
     dob = claimed.get("date_of_birth")
     if dob and extracted.get("date_of_birth"):

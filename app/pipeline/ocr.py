@@ -23,11 +23,43 @@ def _prep(img: np.ndarray, min_width: int = 1400) -> np.ndarray:
     return cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(gray)
 
 
+def ink(img: np.ndarray, threshold: float = 0.55, width: int = 1600) -> np.ndarray:
+    """Black print only, on white. ID cards print black text over coloured
+    security patterns (the blue guilloche on a MyKad); black ink is dark in every
+    colour channel while the pattern is bright in at least one, so the brightest
+    channel separates them. Dividing by the local background brightness makes it
+    work under shadows and uneven phone lighting."""
+    if img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    f = width / img.shape[1]
+    img = cv2.resize(img, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC if f > 1 else cv2.INTER_AREA)
+    img = cv2.medianBlur(img, 3)
+    brightest = np.max(img, axis=2).astype(np.float32)
+    paper = cv2.GaussianBlur(cv2.dilate(brightest, np.ones((21, 21), np.uint8)), (0, 0), 31) + 1
+    return np.where(brightest / paper < threshold, 0, 255).astype(np.uint8)
+
+
+# (threshold, thicken strokes, page mode): the combinations that read the
+# number on a real MyKad front under scan, shadow, dark JPEG and small-photo
+# conditions. Several readings let the caller vote out single misreads.
+_CARD_PASSES = ((0.55, False, 6), (0.55, True, 6), (0.55, True, 11), (0.65, False, 6))
+
+
+def read_texts(img: np.ndarray) -> list[str]:
+    """Several OCR readings of a card or document page, one per cleanup pass."""
+    out = []
+    cache: dict[float, np.ndarray] = {}
+    for threshold, thicken, psm in _CARD_PASSES:
+        m = cache.setdefault(threshold, ink(img, threshold))
+        if thicken:
+            m = cv2.erode(m, np.ones((3, 3), np.uint8))
+        out.append(pytesseract.image_to_string(m, lang="eng", config=f"--psm {psm}"))
+    return out
+
+
 def read_text(img: np.ndarray) -> str:
-    """General text on the document (names, numbers)."""
-    g = _prep(img)
-    out = [pytesseract.image_to_string(g, lang="eng", config=f"--psm {psm}") for psm in (6, 11)]
-    return "\n".join(out)
+    """General text on the document (names, numbers), all passes joined."""
+    return "\n".join(read_texts(img))
 
 
 _fast = None

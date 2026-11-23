@@ -91,3 +91,43 @@ def selfie(variant: int = 0) -> np.ndarray:
     img = face_bgr()[0:330, 80:400]
     img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
     return cv2.convertScaleAbs(cv2.GaussianBlur(img, (3, 3), 0), alpha=0.9, beta=8 + variant)
+
+
+def _guilloche(w: int, h: int) -> Image.Image:
+    """Pale cyan card with dense wavy security lines, like a MyKad's background."""
+    im = Image.new("RGB", (w, h), (206, 236, 242))
+    d = ImageDraw.Draw(im)
+    xs = np.arange(0, w, 3)
+    for k in range(0, h + 200, 9):
+        ys = k + 18 * np.sin(xs / 37.0 + k / 23.0) + 7 * np.sin(xs / 11.0)
+        d.line(list(zip(xs.tolist(), ys.tolist())), fill=(110, 185, 205), width=1)
+    for k in range(-h, w, 14):
+        d.line([(k, 0), (k + h // 2, h)], fill=(150, 205, 220), width=1)
+    return im
+
+
+def mykad_front(number: str, name_lines: list[str], address_lines: list[str], sex_word: str,
+                portrait_bgr: np.ndarray | None) -> bytes:
+    w, h = 1500, 950
+    im = _guilloche(w, h)
+    d = ImageDraw.Draw(im)
+    d.text((180, 40), "KAD PENGENALAN", font=_font(SANS, 52), fill=(30, 30, 40))
+    d.text((180, 100), "MALAYSIA", font=_font(SANS, 70), fill=(30, 30, 40))
+    d.text((90, 240), number, font=_font(SANS, 62), fill=(60, 60, 60))
+    if portrait_bgr is not None:
+        p = Image.fromarray(cv2.cvtColor(portrait_bgr, cv2.COLOR_BGR2RGB)).resize((400, 480))
+        im.paste(p, (1000, 260))
+    y = 600
+    for line in name_lines:
+        d.text((90, y), line, font=_font(SANS, 40), fill=(15, 15, 15)); y += 46
+    for line in address_lines:
+        d.text((90, y), line, font=_font(SANS, 34), fill=(15, 15, 15)); y += 40
+    d.text((1060, 780), "WARGANEGARA", font=_font(SANS, 36), fill=(15, 15, 15))
+    d.text((1160, 825), sex_word, font=_font(SANS, 36), fill=(15, 15, 15))
+    return cv2.imencode(".jpg", cv2.cvtColor(np.asarray(im), cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 90])[1].tobytes()
+
+
+def mykad_back(number: str) -> bytes:
+    im = _guilloche(1500, 950)
+    ImageDraw.Draw(im).text((430, 680), f"{number}-06-01", font=_font(SANS, 58), fill=(70, 70, 70))
+    return cv2.imencode(".jpg", cv2.cvtColor(np.asarray(im), cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 90])[1].tobytes()

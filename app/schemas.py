@@ -16,6 +16,7 @@ class Claimed(BaseModel):
     full_name: str | None = Field(default=None, max_length=200)
     document_number: str | None = Field(default=None, max_length=60)
     date_of_birth: date | None = None
+    address: str | None = Field(default=None, max_length=300, description="Checked against the MyKad address")
 
 
 class CreateVerification(BaseModel):
