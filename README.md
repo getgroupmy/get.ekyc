@@ -203,6 +203,24 @@ def is_valid(secret: str, timestamp: str, raw_body: bytes, signature: str) -> bo
 
 A manual decision in the console sends the same webhook with `decided_by: "admin"`.
 
+## Start at boot (Mac mini)
+
+Run once on the Mac mini (asks for your Mac password):
+
+```bash
+cd ~/get.ekyc && ./scripts/install_service.sh
+```
+
+The server and the Cloudflare tunnel (token read from `~/.cloudflared/ekyc.token`)
+become startup services: they start at boot before anyone logs in, run as you,
+and restart by themselves if they stop. The script also sets the Mac to restart
+after a power failure and never to sleep. With FileVault on, a reboot waits at
+the login screen for your password before anything starts.
+
+- Restart by hand: `sudo launchctl kickstart -k system/my.getride.ekyc`
+- Logs: `~/get.ekyc/server.log`, `~/.cloudflared/tunnel.log`
+- Remove: `./scripts/install_service.sh --uninstall`
+
 ## Updating and the change log
 
 Owners update from the console: **Changelog → Check for updates → Update now**.
