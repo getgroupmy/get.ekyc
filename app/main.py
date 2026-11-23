@@ -75,6 +75,29 @@ def root():
     return RedirectResponse("/admin")
 
 
+@app.get("/guide", include_in_schema=False)
+def guide_page():
+    return FileResponse(STATIC / "guide.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/guide/meta", include_in_schema=False)
+def guide_meta():
+    """Live values the integration guide shows (no secrets)."""
+    from .pipeline.catalog import TYPES
+    from .reasons import MESSAGES
+    s = get_settings()
+    return {
+        "document_types": [{"id": t.id, "name": t.name, "category": t.category, "needs_selfie": t.needs_selfie}
+                           for t in TYPES.values()],
+        "reasons": MESSAGES,
+        "max_upload_mb": s.max_upload_mb,
+        "session_ttl_minutes": s.session_ttl_minutes,
+        "test_retention_hours": s.test_retention_hours,
+        "liveness_default": s.liveness_default,
+        "face_match_threshold": s.face_match_threshold,
+    }
+
+
 @app.get("/admin", include_in_schema=False)
 def admin_ui():
     return FileResponse(STATIC / "admin.html", headers={"Cache-Control": "no-store"})

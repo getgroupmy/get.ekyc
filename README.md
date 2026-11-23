@@ -127,6 +127,11 @@ result on the check from the signed webhook. That is get-ride work, not done yet
 
 ## Integrating (get-ride or any app)
 
+A step-by-step guide for app owners, with code in curl, Node/Deno, Python and Flutter, is served at
+**`/guide`** (e.g. `https://ekyc.getride.my/guide`). Document types, reason codes and limits on it come
+live from the running server. The summary below is the same flow.
+
+
 Call the API **from your backend**, never from the mobile app — the API key must stay server-side.
 The app captures the images and sends them to your backend, which forwards them.
 

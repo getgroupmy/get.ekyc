@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GET eKYC integration guide</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#16202c; --mute:#5f6b7a; --line:#e2e6eb; --brand:#0b6e4f; --code:#0f1720; --codeink:#e6edf3;
+          --ok:#12805c; --bad:#c0362c; --warn:#9a5b00; --chip:#eef2f5; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f141a; --card:#171e27; --ink:#e7edf3; --mute:#97a3b2; --line:#283340; --brand:#3ecf9a; --code:#0a0f14; --codeink:#e6edf3;
+            --ok:#3ecf9a; --bad:#ff7b72; --warn:#f0b34a; --chip:#202a35; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15.5px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  header { position:sticky; top:0; z-index:5; background:var(--card); border-bottom:1px solid var(--line); padding:12px 20px; display:flex; gap:12px; align-items:center; }
+  header b { font-size:16px; } header .mute { font-size:13px; }
+  .wrap { display:grid; grid-template-columns:230px minmax(0,1fr); gap:28px; max-width:1180px; margin:0 auto; padding:24px 20px 80px; }
+  nav { position:sticky; top:72px; align-self:start; font-size:14px; }
+  nav a { display:block; color:var(--mute); text-decoration:none; padding:4px 8px; border-radius:6px; }
+  nav a:hover { background:var(--chip); color:var(--ink); }
+  main section { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:22px 24px; margin-bottom:18px; }
+  h1 { font-size:26px; margin:0 0 6px; } h2 { font-size:19px; margin:0 0 10px; } h3 { font-size:15.5px; margin:18px 0 6px; }
+  p { margin:8px 0; } .mute { color:var(--mute); }
+  code { background:var(--chip); padding:1px 6px; border-radius:5px; font:13.5px ui-monospace,Menlo,monospace; }
+  pre { position:relative; background:var(--code); color:var(--codeink); padding:14px 16px; border-radius:10px; overflow:auto; font:13px/1.55 ui-monospace,Menlo,monospace; margin:8px 0; }
+  pre code { background:none; padding:0; color:inherit; }
+  .copy { position:absolute; top:8px; right:8px; font:12px system-ui; background:#2a3440; color:#dbe3ea; border:0; border-radius:6px; padding:4px 8px; cursor:pointer; }
+  .tabs { display:flex; gap:4px; flex-wrap:wrap; margin-top:10px; }
+  .tabs button { font:inherit; font-size:13px; border:1px solid var(--line); background:var(--card); color:var(--mute); border-radius:8px; padding:4px 10px; cursor:pointer; }
+  .tabs button.on { background:var(--brand); border-color:var(--brand); color:#fff; }
+  .lang { display:none; } .lang.on { display:block; }
+  table { width:100%; border-collapse:collapse; font-size:14px; margin:8px 0; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--mute); }
+  .steps { counter-reset:s; list-style:none; padding:0; margin:10px 0; }
+  .steps li { counter-increment:s; position:relative; padding:6px 0 6px 40px; }
+  .steps li::before { content:counter(s); position:absolute; left:0; top:6px; width:26px; height:26px; border-radius:50%; background:var(--brand); color:#fff; font-weight:700; display:grid; place-items:center; font-size:13px; }
+  .note { border-left:4px solid var(--warn); background:var(--chip); padding:10px 14px; border-radius:8px; margin:10px 0; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); }
+  .flow { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:12px 0; font-size:14px; }
+  .flow span { background:var(--chip); border:1px solid var(--line); border-radius:10px; padding:8px 12px; }
+  .flow i { color:var(--mute); font-style:normal; }
+  main { min-width:0; } main section { overflow-wrap:anywhere; }
+  td code, p code, li code { word-break:break-all; }
+  @media (max-width: 860px) {
+    .wrap { grid-template-columns:minmax(0,1fr); padding:16px 12px 60px; } nav { display:none; }
+    main section { padding:18px 14px; }
+    table { display:block; overflow-x:auto; }
+    header { flex-wrap:wrap; } header #baseShow { width:100%; overflow-wrap:anywhere; }
+  }
+</style>
+</head>
+<body>
+<header><b>GET eKYC</b><span class="mute">Integration guide</span><span style="flex:1"></span><span class="mute" id="baseShow"></span></header>
+<div class="wrap">
+<nav>
+  <a href="#overview">Overview</a><a href="#key">1 · Get an API key</a><a href="#create">2 · Create a verification</a>
+  <a href="#upload">3 · Upload the photos</a><a href="#submit">4 · Submit</a><a href="#result">5 · Get the result</a>
+  <a href="#webhooks">Webhooks</a><a href="#types">Document types</a><a href="#liveness">Liveness capture</a>
+  <a href="#fields">What comes back</a><a href="#reasons">Reason codes</a><a href="#more">Other calls</a>
+  <a href="#rules">Rules &amp; limits</a><a href="#errors">Errors</a>
+</nav>
+<main>
+
+<section id="overview">
+  <h1>Add identity verification to your app</h1>
+  <p>GET eKYC checks identity documents (MyKad and the other Malaysian cards, passports, foreign ID cards), driving
+  licences and vehicle documents, matches the selfie to the document photo, checks the person is live, and tells
+  your server the result. This guide takes you from an API key to a working integration.</p>
+  <div class="flow"><span>Your app takes photos</span><i>→</i><span>Your server calls GET eKYC</span><i>→</i>
+    <span>create · upload · submit</span><i>→</i><span>webhook / poll</span><i>→</i><span>approved · review · rejected</span></div>
+  <div class="note"><b>One rule:</b> call the API <b>from your server</b>, never from the mobile app or browser. The API key
+  must stay secret: your app sends the photos to your server, and your server forwards them.</div>
+  <p class="mute">Base URL for every call below: <code id="baseInline"></code></p>
+</section>
+
+<section id="key">
+  <h2>1 · Get an API key</h2>
+  <ol class="steps">
+    <li>Ask the GET eKYC owner for a console login with the <b>Developer</b> role (it sees only the keys you create).</li>
+    <li>Sign in to the console (the owner gives you its address: it is not open to the internet) → <b>API clients</b> → enter your app's name and, optionally, a webhook URL → <b>Create client</b>. Or ask an admin to create the key for you.</li>
+    <li>Copy the key (<code>ek_…</code>) and the webhook secret from the box. They are shown <b>once</b>; store them in your server's secret store.</li>
+    <li>Send the key in the <code>X-API-Key</code> header on every call.</li>
+  </ol>
+  <p class="mute">Lost the key? Revoke it and create a new one. Use <b>Try it</b> in the console to test photos before writing code.</p>
+</section>
+
+<section id="create">
+  <h2>2 · Create a verification</h2>
+  <p>One verification = one person (or one vehicle document). Leave <code>document_type</code> out (or <code>"auto"</code>) and
+  GET eKYC detects it from the photo. <code>external_ref</code> is <b>your</b> user id: it links results to your user, lets
+  you re-authenticate them later and keeps their own re-verifications from counting as duplicates.</p>
+  <div class="tabs" data-group="create"></div>
+  <pre class="lang" data-group="create" data-lang="curl"><code>curl -s -X POST BASE/v1/verifications \
+  -H "X-API-Key: $EKYC_KEY" -H "Content-Type: application/json" \
+  -d '{
+    "external_ref": "driver-1042",
+    "country": "MYS",
+    "claimed": { "full_name": "Ali bin Abu", "document_number": "900514-10-5231" },
+    "consent": { "version": "2026-11", "accepted_at": "2026-11-24T09:30:00Z" }
+  }'</code></pre>
+  <pre class="lang" data-group="create" data-lang="node"><code>// Node 18+ / Deno / Supabase Edge Function
+const BASE = "BASE";
+const key = globalThis.Deno?.env.get("EKYC_KEY") ?? process.env.EKYC_KEY;
+
+const res = await fetch(`${BASE}/v1/verifications`, {
+  method: "POST",
+  headers: { "X-API-Key": key, "Content-Type": "application/json" },
+  body: JSON.stringify({
+    external_ref: "driver-1042",
+    country: "MYS",
+    claimed: { full_name: "Ali bin Abu", document_number: "900514-10-5231" },
+    consent: { version: "2026-11", accepted_at: new Date().toISOString() },
+  }),
+});
+const v = await res.json();   // v.id, v.required_media, v.liveness_challenge</code></pre>
+  <pre class="lang" data-group="create" data-lang="python"><code>import os, httpx
+
+BASE = "BASE"
+headers = {"X-API-Key": os.environ["EKYC_KEY"]}
+
+v = httpx.post(f"{BASE}/v1/verifications", headers=headers, json={
+    "external_ref": "driver-1042",
+    "country": "MYS",
+    "claimed": {"full_name": "Ali bin Abu", "document_number": "900514-10-5231"},
+    "consent": {"version": "2026-11", "accepted_at": "2026-11-24T09:30:00Z"},
+}).json()   # v["id"], v["required_media"], v["liveness_challenge"]</code></pre>
+  <h3>Request fields</h3>
+  <table><thead><tr><th>Field</th><th>Required</th><th>What it is</th></tr></thead><tbody>
+    <tr><td><code>document_type</code></td><td>no</td><td><code>auto</code> (default) or a type from <a href="#types">the list</a>. If you set it and the photo is something else, the case goes to review.</td></tr>
+    <tr><td><code>country</code></td><td>no</td><td>ISO alpha-3 (<code>MYS</code>, <code>IDN</code>…). Detected from the document when left out; a mismatch goes to review.</td></tr>
+    <tr><td><code>external_ref</code></td><td>recommended</td><td>Your user id (max 200 chars).</td></tr>
+    <tr><td><code>claimed</code></td><td>no</td><td>What the user typed: <code>full_name</code>, <code>document_number</code> (IC or the document's own number, dashes optional), <code>date_of_birth</code> (YYYY-MM-DD), <code>address</code>, <code>plate</code> (vehicle documents). Each is checked against the document.</td></tr>
+    <tr><td><code>require_liveness</code></td><td>no</td><td>Default <span id="livDefault"></span>. Asks for the 3 head-turn frames (identity documents only).</td></tr>
+    <tr><td><code>consent</code></td><td>yes, for people</td><td><code>{version, accepted_at, text_sha256?}</code> of the consent notice the user accepted. PDPA requires explicit consent for biometrics.</td></tr>
+    <tr><td><code>test</code></td><td>no</td><td><code>true</code> for test runs: never counted as duplicates, deleted after <span class="testHours"></span> hours.</td></tr>
+  </tbody></table>
+  <p>The response tells you what to upload next:</p>
+  <pre><code>{ "id": "ver_6f…", "status": "created",
+  "required_media": ["document_front", "selfie", "liveness_1", "liveness_2", "liveness_3"],
+  "liveness_challenge": ["left", "center", "right"] }</code></pre>
+</section>
+
+<section id="upload">
+  <h2>3 · Upload the photos</h2>
+  <p>One <code>PUT</code> per image, as multipart form field <code>file</code> (JPEG, PNG or WebP, up to <span class="maxMb"></span> MB).
+  Kinds: <code>document_front</code>, <code>document_back</code> (optional; recommended for MyKad), <code>selfie</code>,
+  <code>liveness_1</code>…<code>liveness_3</code>. Each answer includes image quality, so your app can ask for a retake right away.</p>
+  <div class="tabs" data-group="upload"></div>
+  <pre class="lang" data-group="upload" data-lang="curl"><code>curl -s -X PUT BASE/v1/verifications/$ID/media/document_front \
+  -H "X-API-Key: $EKYC_KEY" -F file=@front.jpg</code></pre>
+  <pre class="lang" data-group="upload" data-lang="node"><code>async function upload(id, kind, bytes /* Uint8Array */) {
+  const form = new FormData();
+  form.append("file", new Blob([bytes], { type: "image/jpeg" }), `${kind}.jpg`);
+  const r = await fetch(`${BASE}/v1/verifications/${id}/media/${kind}`, {
+    method: "PUT", headers: { "X-API-Key": key }, body: form,
+  });
+  return r.json();   // { kind, quality: { sharpness, brightness, glare, ... } }
+}
+for (const kind of v.required_media) await upload(v.id, kind, photos[kind]);</code></pre>
+  <pre class="lang" data-group="upload" data-lang="python"><code>for kind in v["required_media"]:
+    with open(f"{kind}.jpg", "rb") as fh:
+        httpx.put(f"{BASE}/v1/verifications/{v['id']}/media/{kind}",
+                  headers=headers, files={"file": (f"{kind}.jpg", fh, "image/jpeg")}).raise_for_status()</code></pre>
+  <pre class="lang" data-group="upload" data-lang="dart"><code>// Flutter: the app sends photos to YOUR server (never to GET eKYC directly)
+final req = http.MultipartRequest("POST", Uri.parse("https://your-server/kyc/upload"))
+  ..fields["kind"] = "document_front"
+  ..files.add(await http.MultipartFile.fromPath("file", image.path));
+await req.send();</code></pre>
+  <p class="mute">Photo tips for your capture screen: fill the frame with the card, no flash glare, rear camera for documents,
+  front camera for the selfie, face the camera in even light.</p>
+</section>
+
+<section id="submit">
+  <h2>4 · Submit</h2>
+  <pre><code>curl -s -X POST BASE/v1/verifications/$ID/submit -H "X-API-Key: $EKYC_KEY"</code></pre>
+  <p>Returns <code>202</code> with <code>status: "processing"</code>. A check takes a few seconds. Missing photos return
+  <code>422</code> with the list. Unsubmitted sessions expire after <span class="ttl"></span> minutes.</p>
+</section>
+
+<section id="result">
+  <h2>5 · Get the result</h2>
+  <p>Use the <a href="#webhooks">webhook</a> (recommended) or poll every 1–2 seconds:</p>
+  <pre><code>curl -s BASE/v1/verifications/$ID -H "X-API-Key: $EKYC_KEY"</code></pre>
+  <table><thead><tr><th>status</th><th>Meaning</th><th>What your app does</th></tr></thead><tbody>
+    <tr><td><code>processing</code></td><td>Still checking</td><td>Wait</td></tr>
+    <tr><td class="ok"><code>approved</code></td><td>All checks passed (or a reviewer approved)</td><td>Let the user continue</td></tr>
+    <tr><td class="warn"><code>review</code></td><td>A person will decide</td><td>Show "We're checking your documents"; wait for the webhook</td></tr>
+    <tr><td class="bad"><code>rejected</code></td><td>A check failed</td><td>Show <code>reason_details[].message</code>; offer a retake when the reason is about photo quality</td></tr>
+  </tbody></table>
+  <p>Every answer carries <code>reasons</code> (codes) and <code>reason_details</code> (code + a message you can show the user).</p>
+</section>
+
+<section id="webhooks">
+  <h2>Webhooks</h2>
+  <p>If your client has a webhook URL, GET eKYC POSTs the result there when a case is decided, automatically or by a reviewer
+  (3 attempts). Answer with any 2xx.</p>
+  <pre><code>{ "event": "verification.completed", "id": "ver_6f…", "external_ref": "driver-1042", "test": false,
+  "status": "approved", "reasons": [], "decided_by": "auto", "completed_at": "2026-11-24T09:31:12Z" }</code></pre>
+  <p><b>Always verify the signature</b> before trusting it: <code>X-EKYC-Signature</code> must equal
+  <code>"sha256=" + HMAC_SHA256(webhook_secret, X-EKYC-Timestamp + "." + raw_body)</code>, and the timestamp should be recent.</p>
+  <div class="tabs" data-group="hook"></div>
+  <pre class="lang" data-group="hook" data-lang="node"><code>import crypto from "node:crypto";
+
+export function verifyEkycWebhook(secret, timestamp, rawBody, signature) {
+  const expected = "sha256=" + crypto.createHmac("sha256", secret)
+    .update(`${timestamp}.${rawBody}`).digest("hex");
+  const fresh = Math.abs(Date.now() / 1000 - Number(timestamp)) < 300;
+  return fresh && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+}</code></pre>
+  <pre class="lang" data-group="hook" data-lang="python"><code>import hashlib, hmac, time
+
+def verify_ekyc_webhook(secret: str, timestamp: str, raw_body: bytes, signature: str) -> bool:
+    expected = "sha256=" + hmac.new(secret.encode(), timestamp.encode() + b"." + raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature) and abs(time.time() - int(timestamp)) < 300</code></pre>
+  <pre class="lang" data-group="hook" data-lang="deno"><code>// Supabase Edge Function / Deno
+async function verifyEkycWebhook(secret: string, ts: string, raw: string, sig: string) {
+  const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(`${ts}.${raw}`)));
+  const expected = "sha256=" + [...mac].map(b => b.toString(16).padStart(2, "0")).join("");
+  return expected === sig && Math.abs(Date.now() / 1000 - Number(ts)) < 300;
+}</code></pre>
+</section>
+
+<section id="types">
+  <h2>Document types</h2>
+  <p>Sent as <code>document_type</code>, or detected when you leave it out. Identity documents need a selfie; vehicle documents don't.</p>
+  <table><thead><tr><th>document_type</th><th>Document</th><th>Category</th><th>Selfie</th></tr></thead><tbody id="typeRows"></tbody></table>
+  <p class="mute">Not sure what the user uploaded? <a href="#more">Detect</a> it first.</p>
+</section>
+
+<section id="liveness">
+  <h2>Liveness capture</h2>
+  <p><code>liveness_challenge</code> is a random order of <code>center</code>, <code>left</code> and <code>right</code>. In your app:</p>
+  <ol class="steps">
+    <li>Show the steps one at a time: "Look straight at the camera", "Turn your head to the left", "Turn your head to the right" — in the order given.</li>
+    <li>Take one frame per step with the front camera, in order, and upload them as <code>liveness_1</code>, <code>liveness_2</code>, <code>liveness_3</code>.</li>
+    <li>Take the frames live, in your app: never let the user pick them from the gallery.</li>
+  </ol>
+  <p class="mute">Turns must be clear and in opposite directions (mirrored front cameras are fine). Every frame must be the same person as the selfie.</p>
+</section>
+
+<section id="fields">
+  <h2>What comes back</h2>
+  <p><code>result.extracted</code> holds what was read from the document; <code>result.checks</code> lists every check with
+  <code>status</code> (<code>pass</code> / <code>review</code> / <code>fail</code> / <code>skipped</code>) and details;
+  <code>result.scores</code> holds <code>face_match</code> (0–1) and <code>face_score</code> (0–100, 80 = match threshold).</p>
+  <table><thead><tr><th>Field</th><th>Example</th></tr></thead><tbody>
+    <tr><td><code>document_type</code>, <code>document_subtype</code>, <code>country</code></td><td>national_id · MyKad · MYS</td></tr>
+    <tr><td><code>id_number</code></td><td>The holder's ID number (IC / NRIC), e.g. 900514-10-5231</td></tr>
+    <tr><td><code>document_number</code></td><td>The document's own number: passport no., card serial, policy no., permit no.</td></tr>
+    <tr><td><code>full_name</code>, <code>date_of_birth</code>, <code>sex</code>, <code>citizenship</code></td><td>ALI BIN ABU · 1990-05-14 · M · citizen</td></tr>
+    <tr><td><code>address</code>, <code>postcode</code>, <code>city</code>, <code>state</code></td><td>MyKad address</td></tr>
+    <tr><td><code>start_date</code>, <code>expiry_date</code></td><td>Validity (licences, insurance, permits, passports)</td></tr>
+    <tr><td><code>plate</code>, <code>chassis_number</code>, <code>engine_number</code>, <code>year_made</code>, <code>vehicle_age_years</code></td><td>Vehicle documents</td></tr>
+    <tr><td><code>licence_classes</code>, <code>psv</code>, <code>gdl</code>, <code>ehailing</code></td><td>Driving licence</td></tr>
+  </tbody></table>
+</section>
+
+<section id="reasons">
+  <h2>Reason codes</h2>
+  <p>Show <code>reason_details[].message</code> to your user, or map the codes to your own wording.</p>
+  <table><thead><tr><th>Code</th><th>Message</th></tr></thead><tbody id="reasonRows"></tbody></table>
+</section>
+
+<section id="more">
+  <h2>Other calls</h2>
+  <h3>Detect a document (nothing stored)</h3>
+  <pre><code>curl -s -X POST BASE/v1/verifications/detect -H "X-API-Key: $EKYC_KEY" -F file=@photo.jpg
+# → { "document_type": "national_id", "subtype": "MyKad", "country": "MYS", "needs_selfie": true, "needs_back": true, ... }</code></pre>
+  <h3>Re-authenticate a verified user (e.g. a driver going online)</h3>
+  <p>Matches a new selfie against the face from that user's latest approved verification. Nothing is stored.</p>
+  <pre><code>curl -s -X POST BASE/v1/verifications/reauth -H "X-API-Key: $EKYC_KEY" \
+  -F external_ref=driver-1042 -F selfie=@now.jpg
+# → { "match": true, "similarity": 0.71, "threshold": THRESH, "verification_id": "ver_6f…" }</code></pre>
+  <h3>Compare two faces</h3>
+  <pre><code>curl -s -X POST BASE/compare -H "x-api-key: $EKYC_KEY" -H "Content-Type: application/json" \
+  -d '{"image1": "&lt;base64&gt;", "image2": "&lt;base64&gt;"}'
+# → { "similarity": 0.87, "verified": true, "cosine": 0.6, "model": "SFace" }   (422 {"error":"no_face"})</code></pre>
+  <h3>List and delete</h3>
+  <pre><code>curl -s "BASE/v1/verifications?external_ref=driver-1042&amp;status=approved" -H "X-API-Key: $EKYC_KEY"
+curl -s -X DELETE BASE/v1/verifications/$ID -H "X-API-Key: $EKYC_KEY"   # erases images and personal data</code></pre>
+</section>
+
+<section id="rules">
+  <h2>Rules &amp; limits</h2>
+  <ul>
+    <li><b>Keys:</b> server-side only; one key per app; revoke a key that leaks and create a new one.</li>
+    <li><b>Images:</b> up to <span class="maxMb"></span> MB each; at least 480 px on the short side; documents flat and sharp.</li>
+    <li><b>Sessions:</b> submit within <span class="ttl"></span> minutes of creating.</li>
+    <li><b>Tests:</b> send <code>"test": true</code> while integrating; test runs are deleted after <span class="testHours"></span> hours.</li>
+    <li><b>Consent:</b> record the user's consent (<code>consent</code>) before taking photos — biometrics are sensitive data under the PDPA.</li>
+    <li><b>Privacy:</b> images and personal data are stored encrypted; delete a user's data with <code>DELETE</code> when they ask.</li>
+    <li><b>Decisions:</b> a <code>review</code> is decided by a person; plan your app for a wait.</li>
+  </ul>
+</section>
+
+<section id="errors">
+  <h2>Errors</h2>
+  <table><thead><tr><th>HTTP</th><th>Meaning</th></tr></thead><tbody>
+    <tr><td>401</td><td>Missing or wrong <code>X-API-Key</code>, or the key was revoked</td></tr>
+    <tr><td>404</td><td>No such verification for this key</td></tr>
+    <tr><td>409</td><td>The verification no longer accepts changes (already submitted or decided)</td></tr>
+    <tr><td>410</td><td>Session expired: create a new verification</td></tr>
+    <tr><td>413</td><td>Image too large</td></tr>
+    <tr><td>422</td><td>Invalid request: unreadable image, missing photos, wrong MyKad number format… (<code>detail</code> says which)</td></tr>
+  </tbody></table>
+</section>
+</main>
+</div>
+<script>
+const BASE = location.origin;
+document.getElementById("baseShow").textContent = BASE;
+document.getElementById("baseInline").textContent = BASE;
+document.querySelectorAll(".base").forEach(e => e.textContent = BASE);
+document.querySelectorAll("pre code").forEach(c => c.textContent = c.textContent.replaceAll("BASE", BASE));
+const LANGS = { curl: "curl", node: "Node / Deno", python: "Python", dart: "Flutter", deno: "Deno / Supabase" };
+document.querySelectorAll(".tabs").forEach(t => {
+  const group = t.dataset.group, blocks = [...document.querySelectorAll(`.lang[data-group="${group}"]`)];
+  const pick = lang => { blocks.forEach(b => b.classList.toggle("on", b.dataset.lang === lang));
+    [...t.children].forEach(b => b.classList.toggle("on", b.dataset.lang === lang)); };
+  blocks.forEach(b => { const btn = document.createElement("button"); btn.textContent = LANGS[b.dataset.lang] || b.dataset.lang;
+    btn.dataset.lang = b.dataset.lang; btn.onclick = () => pick(b.dataset.lang); t.appendChild(btn); });
+  pick(blocks[0].dataset.lang);
+});
+document.querySelectorAll("pre").forEach(p => { const b = document.createElement("button"); b.className = "copy"; b.textContent = "Copy";
+  b.onclick = () => navigator.clipboard.writeText(p.querySelector("code").textContent).then(() => { b.textContent = "Copied"; setTimeout(() => b.textContent = "Copy", 1200); });
+  p.appendChild(b); });
+fetch("/guide/meta").then(r => r.json()).then(m => {
+  const set = (cls, v) => document.querySelectorAll(cls).forEach(e => e.textContent = v);
+  set(".maxMb", m.max_upload_mb); set(".ttl", m.session_ttl_minutes); set(".testHours", m.test_retention_hours);
+  document.getElementById("livDefault").textContent = m.liveness_default ? "true" : "false";
+  document.querySelectorAll("pre code").forEach(c => c.textContent = c.textContent.replace("THRESH", m.face_match_threshold));
+  const tr = (...cells) => { const r = document.createElement("tr"); cells.forEach(x => { const d = document.createElement("td"); d.append(x); r.append(d); }); return r; };
+  const code = t => { const c = document.createElement("code"); c.textContent = t; return c; };
+  document.getElementById("typeRows").replaceChildren(...m.document_types.map(t => tr(code(t.id), t.name, t.category, t.needs_selfie ? "yes" : "no")));
+  document.getElementById("reasonRows").replaceChildren(...Object.entries(m.reasons).map(([k, v]) => tr(code(k), v)));
+});
+</script>
+</body>
+</html>

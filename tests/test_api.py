@@ -270,3 +270,12 @@ def test_reused_photo_under_another_user_goes_to_review(client, api_key, need_mo
     assert b["status"] == "review" and "image_reused" in b["reasons"]
     for v in (a, b):
         client.delete(f"{BASE}/{v['id']}", headers=api_key)
+
+
+def test_integration_guide_is_served(client):
+    page = client.get("/guide")
+    assert page.status_code == 200 and "Add identity verification to your app" in page.text
+    meta = client.get("/guide/meta").json()
+    assert any(t["id"] == "vehicle_registration" for t in meta["document_types"])
+    assert meta["reasons"]["face_mismatch"] and meta["max_upload_mb"] > 0
+    assert "api_key" not in page.text.lower().replace("x-api-key", "")  # no secrets on the page
