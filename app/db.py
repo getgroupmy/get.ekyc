@@ -96,6 +96,17 @@ class Media(Base):
     verification: Mapped[Verification] = relationship(back_populates="media")
 
 
+class SampleDoc(Base):
+    """Saved test images for the console's Try it (encrypted on disk like any image)."""
+    __tablename__ = "sample_docs"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    label: Mapped[str] = mapped_column(String(120))
+    kind: Mapped[str] = mapped_column(String(20))  # document_front | document_back | selfie
+    path: Mapped[str] = mapped_column(String(300))
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

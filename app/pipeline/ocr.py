@@ -70,6 +70,12 @@ def read_texts(img: np.ndarray) -> list[str]:
     return out
 
 
+def read_fine_print(img: np.ndarray) -> list[str]:
+    """Two high-resolution readings for tiny print (a card serial): enlarged
+    ink at two sizes, read as sparse text."""
+    return [pytesseract.image_to_string(ink(img, 0.55, w), lang="eng", config="--psm 11") for w in (2400, 3200)]
+
+
 def read_text(img: np.ndarray) -> str:
     """General text on the document (names, numbers), all passes joined."""
     return "\n".join(read_texts(img))

@@ -42,6 +42,9 @@ def create(body: CreateVerification, client: ApiClient = Depends(require_client)
             raise HTTPException(422, "MyKad number must be 12 digits, YYMMDD-PB-####, with a real date of "
                                      "birth and place-of-birth code (dashes optional)")
     live = s.liveness_default if body.require_liveness is None else body.require_liveness
+    from ..pipeline.catalog import TYPES
+    if body.document_type != "auto" and not TYPES[body.document_type].needs_selfie:
+        live = False  # vehicle documents, medical reports, visas: no person to check
     v = Verification(
         id="ver_" + secrets.token_hex(12), client_id=client.id, external_ref=body.external_ref,
         document_type=body.document_type, country=body.country.upper() if body.country else None,
@@ -121,3 +124,19 @@ def delete(vid: str, client: ApiClient = Depends(require_client), db: Session = 
     if v.status == "processing":
         raise HTTPException(409, "verification is processing, retry shortly")
     service.erase(db, v, f"client:{client.id}")
+
+
+@router.post("/detect", tags=["verifications"])
+async def detect_document(file: UploadFile = File(...), client: ApiClient = Depends(require_client)):
+    """Upload one image of a document: get back what it is (type, country, card family)
+    and whether a selfie / back side is needed. Nothing is stored."""
+    from ..pipeline.detect import detect
+
+    limit = get_settings().max_upload_mb * 1024 * 1024
+    data = await file.read(limit + 1)
+    if len(data) > limit:
+        raise HTTPException(413, f"image larger than {get_settings().max_upload_mb} MB")
+    try:
+        return detect(data)
+    except images.ImageError as exc:
+        raise HTTPException(422, str(exc)) from exc

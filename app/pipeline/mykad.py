@@ -215,6 +215,22 @@ def _address_from(lines: list[str]) -> dict | None:
     return {"address": ", ".join(out), "postcode": postcode, "city": city, "state": state}
 
 
+def _agreed_address(best: dict, all_readings: list[dict]) -> dict:
+    """Keep only the words at least two readings agree on: the fine security
+    print in the background (KERAJAANMALAYSIA...) sometimes reads as a stray
+    word (SPM) at the end of a line in one reading, never consistently."""
+    def words(a: dict) -> list[str]:
+        return a["address"].replace(",", " ").split()
+
+    seen = [set(words(a)) for a in all_readings]
+    lines = []
+    for line in best["address"].split(", "):
+        kept = [w for w in line.split() if sum(w in s for s in seen) >= 2]
+        if kept:
+            lines.append(" ".join(kept))
+    return {**best, "address": ", ".join(lines)} if lines else best
+
+
 def _has_word(texts: list[str], word: str) -> bool:
     words = {w for t in texts for w in re.findall(r"[A-Z]{4,}", t.upper())}
     return any(fuzz.ratio(word, w) >= 85 for w in words)
@@ -239,6 +255,7 @@ def read_card(front_texts: list[str], back_texts: list[str] | None = None) -> di
                    "permanent_resident" if _has_word(front_texts, "PEMASTAUTIN") else None)
     name, address = None, None
     readings: list[str] = []
+    addresses: list[dict] = []
     for t in front_texts:  # the most complete reading wins
         lines = _lines_after_number(t, number)
         if lines is None:
@@ -247,6 +264,8 @@ def read_card(front_texts: list[str], back_texts: list[str] | None = None) -> di
         if n:
             readings.append(n)
         a = _address_from(rest) if n else None
+        if a:
+            addresses.append(a)
         if n and (name is None or (a and not address) or (a and address and len(a["address"]) > len(address["address"]))):
             name, address = n, a or address
     if readings:
@@ -255,6 +274,8 @@ def read_card(front_texts: list[str], back_texts: list[str] | None = None) -> di
         def support(r: str) -> tuple[int, int]:
             return (sum(sum(w in o.split() for o in readings) for w in r.split()), len(r.split()))
         name = max(readings, key=support)
+    if address and len(addresses) >= 2:
+        address = _agreed_address(address, addresses)
     name = name and re.sub(r"\s+", " ", name)
     while name and name.split()[-1] in _CONNECTORS:  # father's name lost to blur: no dangling A/L
         name = " ".join(name.split()[:-1]) or None

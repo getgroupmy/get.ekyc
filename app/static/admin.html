@@ -44,6 +44,8 @@
   .bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .secret { font-family:ui-monospace,monospace; word-break:break-all; }
   .hide { display:none; }
+  .slot select, .slot input.file { margin-bottom:6px; }
+  .thumb { width:56px; height:40px; object-fit:cover; border-radius:6px; border:1px solid var(--line); }
   dl { display:grid; grid-template-columns:max-content 1fr; gap:4px 16px; margin:0; } dt { color:var(--mute); } dd { margin:0; word-break:break-word; }
 </style>
 </head>
@@ -107,20 +109,36 @@
   <section id="try" class="hide">
     <div class="card">
       <h2>Run a test verification</h2>
-      <p class="mute">Runs the same checks as the API, as the client you pick. Liveness is skipped here because it needs a live camera sequence.</p>
+      <p class="mute">Pick or upload the document first: its type is detected straight away. Runs are marked TEST and deleted after 48 hours. Liveness is skipped here (it needs a live camera).</p>
+      <div class="grid">
+        <div class="slot" data-kind="document_front"><label>Document front</label><select class="pick"></select><input class="file" type="file" accept="image/*"><label class="mute"><input type="checkbox" class="keep" style="width:auto"> save as default</label></div>
+        <div class="slot" data-kind="document_back"><label>Document back (optional)</label><select class="pick"></select><input class="file" type="file" accept="image/*"><label class="mute"><input type="checkbox" class="keep" style="width:auto"> save as default</label></div>
+        <div class="slot" data-kind="selfie"><label>Selfie <span id="selfiehint" class="mute"></span></label><select class="pick"></select><input class="file" type="file" accept="image/*"><label class="mute"><input type="checkbox" class="keep" style="width:auto"> save as default</label></div>
+      </div>
+      <p id="detected" class="mute">Detected: —</p>
       <div class="grid">
         <div><label for="tclient">Run as client</label><select id="tclient"><option value="">Loading…</option></select></div>
-        <div><label for="ttype">Document type</label><select id="ttype"><option value="auto">Auto-detect</option><option value="passport">Passport</option><option value="national_id">National ID</option><option value="driving_licence">Driving licence</option></select></div>
+        <div><label for="ttype">Document type</label><select id="ttype"></select></div>
         <div><label for="tcountry">Country (optional, e.g. MYS)</label><input id="tcountry" placeholder="auto-detect" maxlength="3"></div>
         <div><label for="tname">Full name (optional)</label><input id="tname"></div>
-        <div><label for="tnum">Document number (optional)</label><input id="tnum"></div>
+        <div><label for="tnum">ID / document number (optional)</label><input id="tnum"></div>
         <div><label for="taddr">Address (optional)</label><input id="taddr"></div>
-        <div><label for="tfront">Document front</label><input id="tfront" type="file" accept="image/*"></div>
-        <div><label for="tback">Document back (optional)</label><input id="tback" type="file" accept="image/*"></div>
-        <div><label for="tselfie">Selfie</label><input id="tselfie" type="file" accept="image/*"></div>
+        <div><label for="tplate">Vehicle plate (optional)</label><input id="tplate"></div>
       </div>
       <p><button class="btn primary" id="trun">Verify</button> <span id="tstate" class="mute"></span></p>
       <pre id="tout" class="hide"></pre>
+    </div>
+    <div class="card">
+      <h2>Saved test documents</h2>
+      <p class="mute">Images you keep for testing, stored encrypted. The default of each kind is picked automatically above.</p>
+      <table><thead><tr><th></th><th>Label</th><th>Kind</th><th>Default</th><th></th></tr></thead><tbody id="srows"></tbody></table>
+      <p id="sempty" class="mute hide">None saved yet. Tick "save as default" when you upload, or add one here.</p>
+      <div class="grid" style="margin-top:10px">
+        <div><label for="slabel">Label</label><input id="slabel" placeholder="e.g. Staff MyKad front"></div>
+        <div><label for="skind">Kind</label><select id="skind"><option value="document_front">Document front</option><option value="document_back">Document back</option><option value="selfie">Selfie</option></select></div>
+        <div><label for="sfile">Image</label><input id="sfile" type="file" accept="image/*"></div>
+        <div><label>&nbsp;</label><button class="btn" id="sadd">Add</button></div>
+      </div>
     </div>
   </section>
 </main>
@@ -243,25 +261,95 @@ $("cadd").onclick = async () => {
   } catch (e) { $("cnew").replaceChildren(h("p", { class: "rejected" }, e.message)); }
 };
 
+const TYPES = [["auto", "Auto-detect"], ["national_id", "National ID (MyKad, MyPR, foreign ID…)"], ["passport", "Passport"],
+  ["driving_licence", "Driving licence"], ["residence_permit", "Residence permit"], ["visa", "Visa"], ["refugee_card", "UNHCR card"],
+  ["foreign_worker_card", "i-Kad"], ["international_driving_permit", "International driving permit"], ["medical_report", "JPJL8A medical"],
+  ["vehicle_registration", "VOC / geran"], ["road_tax", "Road tax"], ["vehicle_insurance", "Insurance / cover note"],
+  ["vehicle_inspection", "PUSPAKOM report"], ["ehailing_vehicle_permit", "EVP e-hailing permit"], ["taxi_permit", "Taxi permit"]];
+$("ttype").replaceChildren(...TYPES.map(([v, t]) => h("option", { value: v }, t)));
+let samples = [];
+const slots = () => [...document.querySelectorAll("#try .slot")];
+
 async function loadTryClients() {
-  const list = await json("/clients");
+  const [list, smp] = await Promise.all([json("/clients"), json("/samples")]);
   const active = list.items.filter(c => c.active);
   $("tclient").replaceChildren(...(active.length ? active.map(c => h("option", { value: c.id }, `${c.name} · ${c.key_prefix}…`))
     : [h("option", { value: "" }, "No active client: create one under API clients")]));
+  samples = smp.items;
+  for (const el of slots()) {
+    const kind = el.dataset.kind, pick = el.querySelector(".pick"), keep = pick.value;
+    const mine = samples.filter(x => x.kind === kind);
+    pick.replaceChildren(h("option", { value: "" }, kind === "document_front" ? "Upload new…" : "Upload new / none"),
+      ...mine.map(x => h("option", { value: x.id }, (x.is_default ? "★ " : "") + x.label)));
+    const def = mine.find(x => x.is_default);
+    pick.value = mine.some(x => x.id === keep) ? keep : (def ? def.id : "");
+  }
+  renderSamples();
+  detectFront();
 }
+
+function renderSamples() {
+  $("sempty").classList.toggle("hide", samples.length > 0);
+  $("srows").replaceChildren(...samples.map(x => {
+    const img = h("img", { class: "thumb", alt: "" });
+    api(`/samples/${x.id}/image`).then(r => r.blob()).then(b => img.src = URL.createObjectURL(b)).catch(() => {});
+    return h("tr", {}, h("td", {}, img), h("td", {}, x.label), h("td", {}, x.kind.replace("document_", "").replace("_", " ")),
+      h("td", {}, x.is_default ? "★ default" : h("button", { class: "btn", onclick: async () => { await json(`/samples/${x.id}/default`, { method: "POST" }); loadTryClients(); } }, "Make default")),
+      h("td", {}, h("button", { class: "btn danger", onclick: async () => { if (confirm(`Delete "${x.label}"?`)) { await api("/samples/" + x.id, { method: "DELETE" }); loadTryClients(); } } }, "Delete")));
+  }));
+}
+
+async function saveSample(kind, file, label, makeDefault) {
+  const fd = new FormData(); fd.append("kind", kind); fd.append("label", label); fd.append("make_default", makeDefault ? "true" : "false"); fd.append("file", file);
+  const r = await fetch("/admin/api/samples", { method: "POST", body: fd, headers: { "X-Admin-Token": token } });
+  if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+  return r.json();
+}
+$("sadd").onclick = async () => {
+  const f = $("sfile").files[0]; if (!f) return;
+  try { await saveSample($("skind").value, f, $("slabel").value || f.name, !samples.some(x => x.kind === $("skind").value && x.is_default)); $("sfile").value = ""; $("slabel").value = ""; loadTryClients(); }
+  catch (e) { alert(e.message); }
+};
+
+let detectSeq = 0;
+async function detectFront() {
+  const el = slots()[0], file = el.querySelector(".file").files[0], pick = el.querySelector(".pick").value;
+  if (!file && !pick) { $("detected").textContent = "Detected: —"; $("selfiehint").textContent = ""; return; }
+  const seq = ++detectSeq; $("detected").textContent = "Detecting…";
+  const fd = new FormData(); if (file) fd.append("file", file); else fd.append("sample_id", pick);
+  try {
+    const r = await fetch("/admin/api/detect", { method: "POST", body: fd, headers: { "X-Admin-Token": token } });
+    const d = await r.json(); if (seq !== detectSeq) return;
+    if (!r.ok) throw new Error(d.detail);
+    $("detected").replaceChildren("Detected: ", h("b", {}, [d.subtype || d.name, d.country].filter(Boolean).join(" · ")),
+      ` (${d.category}, by ${d.how})`, d.readable ? "" : ` · ${d.issue || "details not read"}`);
+    $("selfiehint").textContent = d.needs_selfie ? "(needed for this document)" : "(not needed for this document)";
+    if ($("ttype").value === "auto") $("ttype").title = "Detected: " + d.document_type;
+  } catch (e) { if (seq === detectSeq) $("detected").textContent = "Detected: could not read (" + e.message + ")"; }
+}
+for (const el of slots()) {
+  el.querySelector(".file").addEventListener("change", () => { if (el.querySelector(".file").files[0]) el.querySelector(".pick").value = ""; if (el.dataset.kind === "document_front") detectFront(); });
+  el.querySelector(".pick").addEventListener("change", () => { el.querySelector(".file").value = ""; if (el.dataset.kind === "document_front") detectFront(); });
+}
+
 $("trun").onclick = async () => {
   const say = t => $("tstate").textContent = t;
   $("tout").classList.add("hide");
   if (!$("tclient").value) return say("Pick a client first.");
-  if (!$("tfront").files[0] || !$("tselfie").files[0]) return say("The document front and a selfie are needed.");
   const fd = new FormData();
   fd.append("client_id", $("tclient").value);
   fd.append("document_type", $("ttype").value);
   fd.append("country", $("tcountry").value.trim());
-  fd.append("full_name", $("tname").value); fd.append("document_number", $("tnum").value); fd.append("address", $("taddr").value);
-  for (const [kind, el] of [["document_front", "tfront"], ["document_back", "tback"], ["selfie", "tselfie"]])
-    if ($(el).files[0]) fd.append(kind, $(el).files[0]);
+  for (const [k, id] of [["full_name", "tname"], ["document_number", "tnum"], ["address", "taddr"], ["plate", "tplate"]]) fd.append(k, $(id).value);
   try {
+    for (const el of slots()) {
+      const kind = el.dataset.kind, file = el.querySelector(".file").files[0], pick = el.querySelector(".pick").value;
+      if (file) {
+        fd.append(kind, file);
+        if (el.querySelector(".keep").checked) { await saveSample(kind, file, file.name, true); el.querySelector(".keep").checked = false; }
+      } else if (pick) fd.append(kind + "_sample", pick);
+    }
+    if (!fd.has("document_front") && !fd.has("document_front_sample")) return say("Upload or pick a document front.");
     say("Uploading…");
     const r = await fetch("/admin/api/try", { method: "POST", body: fd, headers: { "X-Admin-Token": token } });
     const started = await r.json();
@@ -271,6 +359,7 @@ $("trun").onclick = async () => {
     say("Result: " + out.status);
     const { audit, media, ...shown } = out;
     $("tout").textContent = JSON.stringify(shown, null, 2); $("tout").classList.remove("hide");
+    loadTryClients();
   } catch (e) { say("Failed: " + e.message); }
 };
 

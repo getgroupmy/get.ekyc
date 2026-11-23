@@ -190,3 +190,49 @@ def test_tests_are_marked_kept_apart_and_deleted(client, api_key, need_models):
     assert client.delete("/admin/api/tests", headers=ADMIN).json()["deleted"] >= 1
     assert client.get("/admin/api/stats", headers=ADMIN).json()["tests"] == 0
     client.delete(f"/v1/verifications/{real['id']}", headers=api_key)
+
+
+def test_saved_samples_and_detect(client, api_key, need_models):
+    front = synth.passport_image(synth.td3_lines(number="R66666666"), synth.face_bgr())
+    up = lambda name, data: {"file": (name, data, "image/jpeg")}  # noqa: E731
+    a = client.post("/admin/api/samples", data={"label": "Test passport", "kind": "document_front", "make_default": "true"},
+                    files=up("p.jpg", front), headers=ADMIN).json()
+    b = client.post("/admin/api/samples", data={"label": "Selfie", "kind": "selfie", "make_default": "true"},
+                    files=up("s.jpg", synth.jpeg(synth.selfie())), headers=ADMIN).json()
+    c = client.post("/admin/api/samples", data={"label": "Other front", "kind": "document_front"},
+                    files=up("o.jpg", front), headers=ADMIN).json()
+    items = {x["id"]: x for x in client.get("/admin/api/samples", headers=ADMIN).json()["items"]}
+    assert items[a["id"]]["is_default"] and not items[c["id"]]["is_default"]
+    client.post(f"/admin/api/samples/{c['id']}/default", headers=ADMIN)
+    items = {x["id"]: x for x in client.get("/admin/api/samples", headers=ADMIN).json()["items"]}
+    assert items[c["id"]]["is_default"] and not items[a["id"]]["is_default"]  # one default per kind
+    assert client.get(f"/admin/api/samples/{a['id']}/image", headers=ADMIN).content[:2] == b"\xff\xd8"
+
+    d = client.post("/admin/api/detect", data={"sample_id": a["id"]}, headers=ADMIN).json()
+    assert d["document_type"] == "passport" and d["country"] == "UTO" and d["needs_selfie"] and d["how"] == "mrz"
+    d2 = client.post("/v1/verifications/detect", files=up("p.jpg", front), headers=api_key).json()
+    assert d2["document_type"] == "passport"
+
+    cid = client.get("/admin/api/clients", headers=ADMIN).json()["items"][0]["id"]
+    r = client.post("/admin/api/try", data={"client_id": cid, "document_front_sample": a["id"], "selfie_sample": b["id"]},
+                    headers=ADMIN)
+    assert r.status_code == 202, r.text
+    v = client.get(f"/admin/api/verifications/{r.json()['id']}", headers=ADMIN).json()
+    assert v["test"] and v["result"]["extracted"]["document_type"] == "passport" and v["result"]["scores"]["face_match"] > 0.5
+    for x in (a, b, c):
+        assert client.delete(f"/admin/api/samples/{x['id']}", headers=ADMIN).status_code == 204
+    assert client.get("/admin/api/samples", headers=ADMIN).json()["items"] == []
+    client.delete("/admin/api/tests", headers=ADMIN)
+
+
+def test_vehicle_document_needs_no_selfie(client, api_key, need_models):
+    voc = synth.card_image(None, ["SIJIL PEMILIKAN KENDERAAN", "No. Pendaftaran: WXY 1234", "Tahun Dibuat: 2019"])
+    r = client.post(BASE, json={"document_type": "vehicle_registration", "claimed": {"plate": "WXY1234"}}, headers=api_key)
+    assert r.json()["required_media"] == ["document_front"]
+    vid = r.json()["id"]
+    client.put(f"{BASE}/{vid}/media/document_front", files={"file": ("v.jpg", voc, "image/jpeg")}, headers=api_key)
+    assert client.post(f"{BASE}/{vid}/submit", headers=api_key).status_code == 202
+    v = client.get(f"{BASE}/{vid}", headers=api_key).json()
+    assert v["status"] == "approved", v["reasons"]
+    assert v["result"]["extracted"]["plate"] == "WXY1234"
+    client.delete(f"{BASE}/{vid}", headers=api_key)

@@ -48,7 +48,17 @@ def _find_portrait(front: np.ndarray):
     return front, None
 
 
-def _read_mrz(imgs: list[np.ndarray]) -> dict | None:
+def _looks_like_mrz(texts: list[str]) -> bool:
+    """A machine readable zone shows up in ordinary OCR as long runs of capitals,
+    digits and '<' fillers. Without that, the slow Tesseract MRZ pass is skipped."""
+    # '<' fillers are the tell: a MyKad's security print (MALAYSIAKERAJAAN...) is
+    # just as long, but has none.
+    return any(ln.count("<") >= 4 or re.search(r"[A-Z0-9]<<", ln) for t in texts for ln in t.upper().splitlines())
+
+
+def _read_mrz(imgs: list[np.ndarray], texts: list[str] | None = None) -> dict | None:
+    """fastmrz first (any orientation, ~0.5 s); Tesseract with the OCR-B model
+    only when fastmrz found nothing valid and the page shows MRZ-like lines."""
     best = None
 
     def consider(text: str) -> bool:
@@ -61,6 +71,8 @@ def _read_mrz(imgs: list[np.ndarray]) -> dict | None:
     for img in imgs:  # primary reader, orientation independent
         if consider(ocr.read_mrz_fast(img)):
             return best
+    if texts is not None and not best and not _looks_like_mrz(texts):
+        return None
     for img in imgs:  # fallback
         for turns in (0, 2):
             if consider(ocr.read_mrz_text(images.rotate(img, turns))):
@@ -72,7 +84,7 @@ def _detect_type(sides: list[np.ndarray], texts: list[str]) -> tuple[str, str, d
     """(document type, how it was decided, the MRZ if one was read).
     An MRZ names the type outright; otherwise the printed wording of driver and
     vehicle documents; otherwise an identity card is assumed."""
-    found = _read_mrz(sides[::-1])
+    found = _read_mrz(sides[::-1], texts)
     if found:
         return catalog.by_mrz(found["document_code"]), "mrz", found
     by_words = catalog.by_wording(texts)
@@ -207,6 +219,23 @@ def _portrait_check(res: DocumentResult, front: np.ndarray, doc_face, required: 
         res.checks.append(check("document_portrait", FAIL, "document_face_not_found"))
 
 
+def _card_serial(texts: list[str]) -> str | None:
+    """MyKad chip serial ("SN: D2009A76CE"): hexadecimal, tiny print. Fix the usual
+    OCR swaps for letters that cannot be in it, vote across the readings, and
+    give it only when at least two readings agree."""
+    from collections import Counter
+    votes: Counter = Counter()
+    for t in texts:
+        for m in re.finditer(r"\bS\s?N\s*[:.;]?\s*([A-Z0-9]{8,12})\b", t.upper()):
+            cand = m.group(1).translate(str.maketrans("OQILZSG", "0011256"))
+            if re.fullmatch(r"[0-9A-F]{8,12}", cand):
+                votes[cand] += 1
+    if not votes:
+        return None
+    best, n = votes.most_common(1)[0]
+    return best if n >= 2 else None
+
+
 def _issue_date(text: str, extracted: dict) -> str | None:
     """Date of issue on a passport data page: the latest printed date that is
     after the date of birth and not after today (the MRZ itself has none)."""
@@ -246,7 +275,7 @@ def _read_identity(res: DocumentResult, extracted: dict, sides, side_texts, all_
                 country = "MYS"
     is_mykad = country == "MYS" and document_type == "national_id"
     if found_mrz is None and not is_mykad and document_type in ("passport", "national_id", "visa", "residence_permit"):
-        found_mrz = _read_mrz(sides[::-1])
+        found_mrz = _read_mrz(sides[::-1], None if document_type == "passport" else all_texts)
     card = (mykad.read_card(side_texts[0], side_texts[1] if len(side_texts) > 1 else None)
             if country == "MYS" and document_type == "national_id" else None)
     foreign = (idnumbers.read(all_texts, country) if document_type == "national_id" and not card and not found_mrz
@@ -256,9 +285,11 @@ def _read_identity(res: DocumentResult, extracted: dict, sides, side_texts, all_
         extracted.update({k: card[k] for k in ("full_name", "date_of_birth", "sex", "place_of_birth", "citizenship",
                                                "address", "postcode", "city", "state") if card.get(k)})
         extracted["id_number"] = card["document_number"]
-        serial = re.search(r"\bSN\s*[:.]?\s*([A-Z0-9]{8,12})\b", text.upper())
+        # The serial is tiny print: only read it from a sharp, large enough photo of the back.
+        back_ok = len(sides) > 1 and min(sides[1].shape[:2]) >= 700 and images.quality(sides[1])["sharpness"] >= 100
+        serial = _card_serial(all_texts + ocr.read_fine_print(sides[1])) if back_ok else None
         if serial:
-            extracted["document_number"] = serial.group(1)  # the card's own serial, printed on the back
+            extracted["document_number"] = serial  # the card's own serial, printed on the back
         family = mykad.family_by_wording(all_texts) or mykad.family_by_colour(front) or "MyKad"
         extracted["document_subtype"] = family
         extracted["holder"] = mykad.FAMILY[family]["holder"]

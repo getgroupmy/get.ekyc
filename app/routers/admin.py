@@ -9,8 +9,9 @@ from sqlalchemy.orm import Session
 from .. import crypto, service, storage, webhooks
 from ..auth import new_api_key, require_admin
 from ..config import get_settings
-from ..db import ApiClient, AuditLog, Media, Verification, audit, get_db, utcnow
-from ..pipeline import images, mykad
+from ..db import ApiClient, AuditLog, Media, SampleDoc, Verification, audit, get_db, utcnow
+from ..pipeline import catalog, images, mykad
+from ..pipeline.detect import detect as detect_document
 from ..schemas import CreateClient, Decision, verification_out
 
 router = APIRouter(prefix="/admin/api", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -149,6 +150,103 @@ def erase(vid: str, db: Session = Depends(get_db)):
         service.erase(db, v, "admin")
 
 
+SLOTS = ("document_front", "document_back", "selfie")
+
+
+async def _read_upload(f: UploadFile | None, kind: str) -> bytes | None:
+    if f is None or not f.filename:
+        return None
+    limit = get_settings().max_upload_mb * 1024 * 1024
+    data = await f.read(limit + 1)
+    if len(data) > limit:
+        raise HTTPException(413, f"{kind} is larger than {get_settings().max_upload_mb} MB")
+    try:
+        images.decode(data)
+    except images.ImageError as exc:
+        raise HTTPException(422, f"{kind}: {exc}") from exc
+    return data
+
+
+def _sample_bytes(db: Session, sample_id: str, kind: str) -> bytes:
+    sd = db.get(SampleDoc, sample_id)
+    if sd is None:
+        raise HTTPException(404, f"saved {kind} not found")
+    return storage.load(sd.path, sd.id)
+
+
+# --- saved sample documents ------------------------------------------------------------
+def _sample_out(sd: SampleDoc) -> dict:
+    return {"id": sd.id, "label": sd.label, "kind": sd.kind, "is_default": sd.is_default,
+            "created_at": sd.created_at.isoformat() + "Z"}
+
+
+@router.get("/samples")
+def list_samples(db: Session = Depends(get_db)):
+    return {"items": [_sample_out(x) for x in db.scalars(select(SampleDoc).order_by(SampleDoc.kind, SampleDoc.created_at))]}
+
+
+@router.post("/samples", status_code=201)
+async def add_sample(label: str = Form(...), kind: str = Form(...), make_default: bool = Form(False),
+                     file: UploadFile = File(...), db: Session = Depends(get_db)):
+    if kind not in SLOTS:
+        raise HTTPException(422, f"kind must be one of {SLOTS}")
+    data = await _read_upload(file, kind)
+    if data is None:
+        raise HTTPException(422, "no file")
+    sid = "smp_" + secrets.token_hex(10)
+    sd = SampleDoc(id=sid, label=label.strip()[:120] or kind, kind=kind, path=storage.save("samples", sid, data))
+    db.add(sd)
+    if make_default:
+        _make_default(db, sd)
+    audit(db, "admin", "sample.added", detail=sid)
+    db.flush()
+    return _sample_out(sd)
+
+
+def _make_default(db: Session, sd: SampleDoc) -> None:
+    for other in db.scalars(select(SampleDoc).where(SampleDoc.kind == sd.kind)):
+        other.is_default = other.id == sd.id
+
+
+@router.post("/samples/{sid}/default")
+def set_default_sample(sid: str, db: Session = Depends(get_db)):
+    sd = db.get(SampleDoc, sid)
+    if sd is None:
+        raise HTTPException(404, "sample not found")
+    _make_default(db, sd)
+    return _sample_out(sd)
+
+
+@router.delete("/samples/{sid}", status_code=204)
+def delete_sample(sid: str, db: Session = Depends(get_db)):
+    sd = db.get(SampleDoc, sid)
+    if sd is None:
+        raise HTTPException(404, "sample not found")
+    storage.delete(sd.path)
+    db.delete(sd)
+    audit(db, "admin", "sample.deleted", detail=sid)
+
+
+@router.get("/samples/{sid}/image")
+def sample_image(sid: str, db: Session = Depends(get_db)):
+    sd = db.get(SampleDoc, sid)
+    if sd is None:
+        raise HTTPException(404, "sample not found")
+    data = storage.load(sd.path, sd.id)
+    kind = "image/png" if data[:4] == b"\x89PNG" else "image/webp" if data[8:12] == b"WEBP" else "image/jpeg"
+    return Response(data, media_type=kind, headers={"Cache-Control": "no-store"})
+
+
+# --- detect only (nothing stored) ----------------------------------------------------------
+@router.post("/detect")
+async def detect(file: UploadFile | None = File(None), sample_id: str = Form(""), db: Session = Depends(get_db)):
+    data = await _read_upload(file, "document") if file else (_sample_bytes(db, sample_id, "document") if sample_id else None)
+    if data is None:
+        raise HTTPException(422, "send a file or a sample_id")
+    return detect_document(data)
+
+
+# --- the console's Try it ---------------------------------------------------------------------
 @router.post("/try", status_code=202)
 async def try_verification(
     background: BackgroundTasks,
@@ -158,41 +256,46 @@ async def try_verification(
     full_name: str = Form(""),
     document_number: str = Form(""),
     address: str = Form(""),
-    document_front: UploadFile = File(...),
-    selfie: UploadFile = File(...),
+    plate: str = Form(""),
+    document_front: UploadFile | None = File(None),
     document_back: UploadFile | None = File(None),
+    selfie: UploadFile | None = File(None),
+    document_front_sample: str = Form(""),
+    document_back_sample: str = Form(""),
+    selfie_sample: str = Form(""),
     db: Session = Depends(get_db),
 ):
-    """The console's Try it: one upload, run as the chosen API client, so no
-    API key has to be pasted (keys are only stored hashed and cannot be listed)."""
+    """Run as the chosen API client (keys are stored hashed and cannot be listed),
+    with uploaded images or saved samples. Always a test."""
     c = db.get(ApiClient, client_id)
     if c is None or not c.active:
         raise HTTPException(404, "client not found or revoked")
-    if document_type not in ("auto", "passport", "national_id", "driving_licence"):
+    if document_type != "auto" and document_type not in catalog.TYPES:
         raise HTTPException(422, "unknown document type")
     country = country.strip().upper() or None
     if country and len(country) != 3:
         raise HTTPException(422, "country must be ISO alpha-3, e.g. MYS")
     if document_number and country == "MYS" and document_type == "national_id" and not mykad.parse_number(document_number):
         raise HTTPException(422, "MyKad number must be 12 digits, YYMMDD-PB-####, dashes optional")
+    media: dict[str, bytes] = {}
+    uploads = {"document_front": document_front, "document_back": document_back, "selfie": selfie}
+    picks = {"document_front": document_front_sample, "document_back": document_back_sample, "selfie": selfie_sample}
+    for kind in SLOTS:
+        data = await _read_upload(uploads[kind], kind)
+        if data is None and picks[kind]:
+            data = _sample_bytes(db, picks[kind], kind)
+        if data is not None:
+            media[kind] = data
+    if "document_front" not in media:
+        raise HTTPException(422, "a document front is needed (upload one or pick a saved one)")
     claimed = {k: v.strip() for k, v in (("full_name", full_name), ("document_number", document_number),
-                                         ("address", address)) if v.strip()} or None
+                                         ("address", address), ("plate", plate)) if v.strip()} or None
     v = Verification(id="ver_" + secrets.token_hex(12), client_id=c.id, external_ref="console-test",
                      document_type=document_type, country=country, require_liveness=False,
                      liveness_challenge=None, claimed=claimed, is_test=True)
     db.add(v)
     db.flush()
-    limit = get_settings().max_upload_mb * 1024 * 1024
-    for kind, f in (("document_front", document_front), ("selfie", selfie), ("document_back", document_back)):
-        if f is None or not f.filename:
-            continue
-        data = await f.read(limit + 1)
-        if len(data) > limit:
-            raise HTTPException(413, f"{kind} is larger than {get_settings().max_upload_mb} MB")
-        try:
-            images.decode(data)
-        except images.ImageError as exc:
-            raise HTTPException(422, f"{kind}: {exc}") from exc
+    for kind, data in media.items():
         mid = "med_" + secrets.token_hex(12)
         v.media.append(Media(id=mid, kind=kind, path=storage.save(v.id, mid, data), sha256=crypto.sha256_hex(data)))
     v.status = "processing"
