@@ -57,6 +57,7 @@
     <button data-tab="clients">API clients</button>
     <button data-tab="try">Try it</button>
     <button data-tab="admins">Admins</button>
+    <button data-tab="account">My account</button>
   </nav>
   <span style="flex:1"></span>
   <span id="health" class="mute"></span>
@@ -105,14 +106,14 @@
       <p id="empty" class="mute hide">Nothing here.</p>
     </div>
     <div id="detail"></div>
-    <div class="card"><div class="bar"><h2 style="margin:0;flex:1">What get.ekyc learned from your reviews</h2>
+    <div class="card" id="learncard"><div class="bar"><h2 style="margin:0;flex:1">What get.ekyc learned from your reviews</h2>
       <button class="btn" id="learnbtn">Refresh</button></div>
       <p class="mute">Built from every case a person approved or rejected. Suggestions only: nothing changes by itself.</p>
       <div id="learn" class="mute">—</div></div>
   </section>
 
   <section id="clients" class="hide">
-    <div class="card">
+    <div class="card" id="newclient">
       <h2>New API client</h2>
       <div class="grid">
         <div><label for="cname">App name</label><input id="cname" placeholder="get-ride"></div>
@@ -162,14 +163,27 @@
       </div>
     </div>
   </section>
+  <section id="account" class="hide">
+    <div class="card" style="max-width:520px">
+      <h2>My account</h2>
+      <p id="myrole" class="mute"></p>
+      <div id="pwchange">
+        <label for="curpw">Current password</label><input id="curpw" type="password" autocomplete="current-password">
+        <label for="newpw">New password (10+ characters)</label><input id="newpw" type="password" autocomplete="new-password">
+        <p><button class="btn primary" id="pwsave">Change password</button> <span id="pwmsg" class="mute"></span></p>
+      </div>
+    </div>
+  </section>
   <section id="admins" class="hide">
     <div class="card">
       <h2>Console users</h2>
-      <p class="mute">Each person signs in with their own username and password; the audit trail shows who approved, rejected or blocked. Entering an existing username sets a new password. The admin token still works as a fallback.</p>
-      <table><thead><tr><th>Username</th><th>Created</th><th>Last sign-in</th><th></th></tr></thead><tbody id="arows"></tbody></table>
+      <p class="mute">Each person signs in with their own username and password; the audit trail shows who approved, rejected or blocked. Entering an existing username changes its role and, if given, its password. The admin token still works as a fallback.</p>
+      <div id="rolehelp" class="mute"></div>
+      <table><thead><tr><th>Username</th><th>Role</th><th>Created</th><th>Last sign-in</th><th></th></tr></thead><tbody id="arows"></tbody></table>
       <div class="grid" style="margin-top:10px">
         <div><label for="auser">Username</label><input id="auser" autocomplete="off" placeholder="e.g. kabeer"></div>
-        <div><label for="apass">Password (10+ characters)</label><input id="apass" type="password" autocomplete="new-password"></div>
+        <div><label for="apass">Password (10+ characters; blank = keep)</label><input id="apass" type="password" autocomplete="new-password"></div>
+        <div><label for="arole">Role</label><select id="arole"></select></div>
         <div><label>&nbsp;</label><button class="btn primary" id="aadd">Save user</button></div>
       </div>
       <p id="amsg" class="mute"></p>
@@ -200,17 +214,36 @@ async function signOut() {
   await fetch("/admin/session/logout", { method: "POST" }).catch(() => {});
   $("whoami").textContent = ""; show(false);
 }
-const TABS = ["queue", "clients", "try", "admins"];
-function show(authed) {
+const TABS = ["queue", "clients", "try", "admins", "account"];
+let me = { permissions: [] };
+const may = p => me.permissions.includes(p);
+const TAB_PERM = { queue: "verifications.view", clients: "clients.view", try: "tests.run", admins: "admins.manage" };
+async function loadMe() {
+  const r = await fetch("/admin/session/me", { headers: token ? { "X-Admin-Token": token } : {} });
+  me = await r.json();
+  for (const b of $("nav").children) {
+    const t = b.dataset.tab;
+    b.classList.toggle("hide", t === "account" ? !me.username || me.username === "token" : !may(TAB_PERM[t]));
+  }
+  $("learncard").classList.toggle("hide", !may("learning.view"));
+  $("deltests").classList.toggle("hide", !may("tests.run"));
+  $("whoami").textContent = me.username ? `${me.username} (${me.role})` : "";
+  return me;
+}
+async function show(authed) {
   $("login").classList.toggle("hide", authed);
   for (const id of ["nav", "logout"]) $(id).classList.toggle("hide", !authed);
   for (const id of TABS) $(id).classList.add("hide");
-  if (authed) tab("queue");
+  if (!authed) return;
+  await loadMe();
+  const first = ["queue", "clients", "try", "admins"].find(t => may(TAB_PERM[t])) || "account";
+  tab(first);
 }
 function tab(name) {
   for (const b of $("nav").children) b.classList.toggle("on", b.dataset.tab === name);
   for (const id of TABS) $(id).classList.toggle("hide", id !== name);
-  if (name === "queue") { loadQueue(); loadLearning().catch(() => {}); sanctionsLine().then(t => { if (t) $("health").textContent = $("health").textContent.split(" · sanctions")[0] + t; }); }
+  if (name === "account") $("myrole").textContent = `Signed in as ${me.username} · role ${me.role} · sees ${me.sees_all ? "every API client" : "only the API clients you created"}.`;
+  if (name === "queue") { loadQueue(); if (may("learning.view")) loadLearning().catch(() => {}); if (may("compliance.view")) sanctionsLine().then(t => { if (t) $("health").textContent = $("health").textContent.split(" · sanctions")[0] + t; }); }
   if (name === "clients") loadClients();
   if (name === "try") loadTryClients();
   if (name === "admins") loadAdmins();
@@ -223,25 +256,38 @@ $("pwBtn").onclick = async () => {
   const r = await fetch("/admin/session/login", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username: $("user").value.trim(), password: $("pass").value, remember: $("remember").checked }) });
   if (!r.ok) { $("loginErr").textContent = r.status === 429 ? "Too many attempts: wait 15 minutes." : "Wrong username or password."; return; }
-  $("pass").value = ""; $("loginErr").textContent = ""; $("whoami").textContent = (await r.json()).username; show(true);
+  $("pass").value = ""; $("loginErr").textContent = ""; show(true);
 };
 $("loginBtn").onclick = async () => {
   token = $("token").value.trim();
-  try { await json("/stats"); sessionStorage.setItem("ekyc_admin", token); $("tokErr").textContent = ""; $("whoami").textContent = "token"; show(true); }
+  try { await json("/stats"); sessionStorage.setItem("ekyc_admin", token); $("tokErr").textContent = ""; show(true); }
   catch { $("tokErr").textContent = "That token was not accepted."; }
 };
 async function loadAdmins() {
-  const list = await json("/admins");
-  $("arows").replaceChildren(...list.items.map(a => h("tr", {}, h("td", {}, a.username), h("td", {}, when(a.created_at)),
+  const [list, roles] = await Promise.all([json("/admins"), json("/roles")]);
+  if (!$("arole").options.length)
+    $("arole").replaceChildren(...Object.entries(roles.roles).map(([k, r]) => h("option", { value: k }, k)));
+  $("arole").value = $("arole").value || "reviewer";
+  $("rolehelp").replaceChildren(h("ul", {}, Object.entries(roles.roles).map(([k, r]) => h("li", {}, h("b", {}, k), " — ", r.label.split(": ")[1] || r.label))));
+  $("arows").replaceChildren(...list.items.map(a => h("tr", {}, h("td", {}, a.username), h("td", {}, a.role), h("td", {}, when(a.created_at)),
     h("td", {}, when(a.last_login_at) || "—"),
-    h("td", {}, h("button", { class: "btn danger", onclick: async () => { if (confirm(`Remove ${a.username}?`)) { await api("/admins/" + a.username, { method: "DELETE" }); loadAdmins(); } } }, "Remove")))));
+    h("td", {}, h("button", { class: "btn", onclick: () => { $("auser").value = a.username; $("arole").value = a.role; $("apass").value = ""; $("apass").focus(); } }, "Edit"), " ",
+      h("button", { class: "btn danger", onclick: async () => { if (confirm(`Remove ${a.username}?`)) { try { await api("/admins/" + a.username, { method: "DELETE" }); } catch (e) { alert(e.message); } loadAdmins(); } } }, "Remove")))));
 }
 $("aadd").onclick = async () => {
+  const body = { username: $("auser").value.trim(), role: $("arole").value };
+  if ($("apass").value) body.password = $("apass").value;
   try {
-    const r = await json("/admins", { method: "POST", body: JSON.stringify({ username: $("auser").value.trim(), password: $("apass").value }) });
-    $("amsg").textContent = r.changed ? `Password changed for ${r.username}.` : `${r.username} can now sign in.`;
+    const r = await json("/admins", { method: "POST", body: JSON.stringify(body) });
+    $("amsg").textContent = r.changed ? `${r.username} updated (role ${r.role}).` : `${r.username} can now sign in as ${r.role}.`;
     $("apass").value = ""; loadAdmins();
-  } catch (e) { $("amsg").textContent = "Not saved: username 3+ letters/digits, password 10+ characters."; }
+  } catch (e) { $("amsg").textContent = "Not saved: " + (e.message.includes("owner") ? "keep at least one owner." : "username 3+ letters/digits; a new user needs a password of 10+ characters."); }
+};
+$("pwsave").onclick = async () => {
+  const r = await fetch("/admin/session/password", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ current: $("curpw").value, new: $("newpw").value }) });
+  $("pwmsg").textContent = r.ok ? "Password changed." : r.status === 403 ? "Current password is wrong." : "New password needs 10+ characters.";
+  if (r.ok) { $("curpw").value = ""; $("newpw").value = ""; }
 };
 $("token").addEventListener("keydown", e => e.key === "Enter" && $("loginBtn").click());
 
@@ -291,7 +337,9 @@ async function openDetail(id) {
     h("td", {}, c.name), h("td", {}, pill(c.status)), h("td", {}, c.code || ""), h("td", { class: "mute" }, JSON.stringify(c.detail))))));
   const note = h("textarea", { rows: "2", placeholder: "Review note (optional)" });
   const decide = d => async () => { await json(`/verifications/${id}/decision`, { method: "POST", body: JSON.stringify({ decision: d, note: note.value || null }) }); await loadQueue(); openDetail(id); };
-  const canDecide = ["review", "approved", "rejected"].includes(v.status);
+  const can = v.can || {};
+  const canDecide = ["review", "approved", "rejected"].includes(v.status) &&
+    (can["verifications.decide"] || can["fraud.block"] || can["verifications.erase"] || (v.test && can["tests.run"]));
   $("detail").replaceChildren(h("div", { class: "card" },
     h("div", { class: "bar" }, h("h2", { style: "margin:0;flex:1" }, v.id), v.test ? h("span", { class: "pill skipped" }, "TEST") : "", pill(v.status)),
     h("p", { class: "mute" }, `${v.client} · ${v.external_ref || "no user ref"} · decided by ${v.decided_by || "—"} · ${when(v.completed_at)}`),
@@ -302,19 +350,19 @@ async function openDetail(id) {
       h("div", {}, h("h2", {}, "Scores"), dl((v.result && v.result.scores) || {}))),
     h("h2", { style: "margin-top:16px" }, "Checks"), checks,
     v.review_note ? h("p", {}, "Note: " + v.review_note) : "",
-    canDecide ? h("div", { style: "margin-top:16px" }, note, h("div", { class: "bar", style: "margin-top:8px" },
-      h("button", { class: "btn primary", onclick: decide("approved") }, "Approve"),
-      h("button", { class: "btn danger", onclick: decide("rejected") }, "Reject"),
+    canDecide ? h("div", { style: "margin-top:16px" }, can["verifications.decide"] ? note : "", h("div", { class: "bar", style: "margin-top:8px" },
+      can["verifications.decide"] ? h("button", { class: "btn primary", onclick: decide("approved") }, "Approve") : "",
+      can["verifications.decide"] ? h("button", { class: "btn danger", onclick: decide("rejected") }, "Reject") : "",
       h("span", { style: "flex:1" }),
-      h("button", { class: "btn", onclick: async () => { await json(`/verifications/${id}/test?test=${!v.test}`, { method: "POST" }); loadQueue(); openDetail(id); } }, v.test ? "Mark as real" : "Mark as test"),
-      h("button", { class: "btn danger", onclick: async () => {
+      !can["verifications.decide"] ? "" : h("button", { class: "btn", onclick: async () => { await json(`/verifications/${id}/test?test=${!v.test}`, { method: "POST" }); loadQueue(); openDetail(id); } }, v.test ? "Mark as real" : "Mark as test"),
+      !can["fraud.block"] ? "" : h("button", { class: "btn danger", onclick: async () => {
         const reason = prompt("Block this person's face for every app? Reason (kept in the audit trail):", "confirmed fraud");
         if (!reason) return;
         const fd = new FormData(); fd.append("reason", reason);
         const r = await fetch(`/admin/api/verifications/${id}/block`, { method: "POST", body: fd, headers: { "X-Admin-Token": token } });
         if (!r.ok) return alert((await r.json()).detail || "Could not block");
         loadQueue(); openDetail(id); } }, "Block this person"),
-      h("button", { class: "btn danger", onclick: async () => { if (confirm(v.test ? "Delete this test verification entirely?" : "Permanently erase the images and personal data for this verification?")) { await api("/verifications/" + id, { method: "DELETE" }); $("detail").replaceChildren(); loadQueue(); } } }, v.test ? "Delete test" : "Erase data"))) : "",
+      !(can["verifications.erase"] || (v.test && can["tests.run"])) ? "" : h("button", { class: "btn danger", onclick: async () => { if (confirm(v.test ? "Delete this test verification entirely?" : "Permanently erase the images and personal data for this verification?")) { await api("/verifications/" + id, { method: "DELETE" }); $("detail").replaceChildren(); loadQueue(); } } }, v.test ? "Delete test" : "Erase data"))) : "",
     h("h2", { style: "margin-top:16px" }, "Audit trail"),
     h("pre", {}, v.audit.map(a => `${when(a.at)}  ${a.actor}  ${a.action}  ${a.detail || ""}`).join("\n"))));
   $("detail").scrollIntoView({ behavior: "smooth" });
@@ -322,12 +370,13 @@ async function openDetail(id) {
 
 async function loadClients() {
   const list = await json("/clients");
+  $("newclient").classList.toggle("hide", !list.can_manage);
   $("crows").replaceChildren(...list.items.map(c => h("tr", {},
-    h("td", {}, c.name), h("td", { class: "secret" }, c.key_prefix + "…"), h("td", {}, c.webhook_url || "—"),
+    h("td", {}, c.name, h("div", { class: "mute" }, "by " + (c.created_by || "—"))), h("td", { class: "secret" }, c.key_prefix + "…"), h("td", {}, c.webhook_url || "—"),
     h("td", {}, h("span", { class: "pill " + (c.active ? "approved" : "rejected") }, c.active ? "active" : "revoked")),
     h("td", {}, String(c.uses)), h("td", { class: "approved" }, String(c.approved)), h("td", { class: "rejected" }, String(c.rejected)),
     h("td", { class: "review" }, String(c.review)), h("td", { class: "mute" }, String(c.tests)),
-    h("td", {}, c.active
+    h("td", {}, !list.can_manage ? "" : c.active
       ? h("button", { class: "btn danger", onclick: async () => { if (confirm(`Revoke the key for ${c.name} (${c.key_prefix}…)?`)) { await api("/clients/" + c.id, { method: "DELETE" }); loadClients(); } } }, "Revoke")
       : c.deletable
         ? h("button", { class: "btn danger", onclick: async () => { if (confirm(`Delete the unused key ${c.key_prefix}… permanently?`)) { await api(`/clients/${c.id}/permanent`, { method: "DELETE" }); loadClients(); } } }, "Delete")
@@ -455,9 +504,8 @@ async function sanctionsLine() {
 }
 fetch("/health").then(r => r.json()).then(s => $("health").textContent =
   s.status === "ok" ? "engine ready" + (s.passive_liveness ? " · passive liveness on" : "") : "engine degraded — check models");
-fetch("/admin/session/me").then(r => r.json()).then(m => {
-  if (m.username) { $("whoami").textContent = m.username; show(true); }
-  else if (token) json("/stats").then(() => { $("whoami").textContent = "token"; show(true); }).catch(() => {});
+fetch("/admin/session/me", { headers: token ? { "X-Admin-Token": token } : {} }).then(r => r.json()).then(m => {
+  if (m.username) show(true);
   if (!m.admins_exist) { $("firstrun").classList.remove("hide"); $("useToken").click(); }
 }).catch(() => {});
 </script>

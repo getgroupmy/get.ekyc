@@ -71,14 +71,30 @@ def read_session(value: str | None) -> str | None:
     return username
 
 
-def require_admin(request: Request, x_admin_token: str = Header(default="")) -> str:
-    """The admin token (header) or a signed-in admin's session cookie."""
+def admin_ctx(request: Request, x_admin_token: str = Header(default="")):
+    """Who is calling: the admin token (owner) or a signed-in console user and their role."""
+    from .permissions import ROLES, Ctx
     if x_admin_token and hmac.compare_digest(x_admin_token.encode(), get_settings().admin_token.encode()):
-        return "admin"
+        return Ctx("admin", None, "owner")
     user = read_session(request.cookies.get(SESSION_COOKIE))
     if user:
         from .db import AdminUser, session_scope
-        with session_scope() as db:  # a deleted admin's cookie stops working
-            if db.get(AdminUser, user) is not None:
-                return f"admin:{user}"
+        with session_scope() as db:  # a deleted user's cookie stops working; role changes apply at once
+            row = db.get(AdminUser, user)
+            if row is not None and row.role in ROLES:
+                return Ctx(f"admin:{user}", user, row.role)
     raise HTTPException(401, "sign in, or send X-Admin-Token")
+
+
+def require_admin(request: Request, x_admin_token: str = Header(default="")) -> str:
+    return admin_ctx(request, x_admin_token).actor
+
+
+def need(perm: str):
+    """Dependency: the caller must hold `perm`."""
+    def check(request: Request, x_admin_token: str = Header(default="")):
+        ctx = admin_ctx(request, x_admin_token)
+        if not ctx.can(perm):
+            raise HTTPException(403, f"your role ({ctx.role}) cannot do this ({perm})")
+        return ctx
+    return check

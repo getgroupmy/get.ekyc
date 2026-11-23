@@ -59,7 +59,32 @@ def logout(response: Response):
 
 @router.get("/me")
 def me(request: Request, db: Session = Depends(get_db)):
+    """Who is signed in (cookie, or the admin token if sent), their role and permissions."""
+    from ..auth import admin_ctx
+    exists = bool(db.scalar(select(func.count()).select_from(AdminUser)))
+    try:
+        ctx = admin_ctx(request, request.headers.get("x-admin-token", ""))
+    except HTTPException:
+        return {"username": None, "role": None, "permissions": [], "admins_exist": exists}
+    return {"username": ctx.username or "token", "role": ctx.role, "permissions": sorted(ctx.perms),
+            "sees_all": ctx.sees_all, "admins_exist": exists}
+
+
+class NewPassword(BaseModel):
+    current: str = Field(max_length=200)
+    new: str = Field(min_length=10, max_length=200)
+
+
+@router.post("/password")
+def change_password(body: NewPassword, request: Request, db: Session = Depends(get_db)):
+    """Any signed-in user can change their own password."""
+    from ..auth import hash_password
     user = read_session(request.cookies.get(SESSION_COOKIE))
-    if user and db.get(AdminUser, user) is None:
-        user = None
-    return {"username": user, "admins_exist": bool(db.scalar(select(func.count()).select_from(AdminUser)))}
+    row = db.get(AdminUser, user) if user else None
+    if row is None:
+        raise HTTPException(401, "sign in first")
+    if not check_password(body.current, row.password_hash):
+        raise HTTPException(403, "current password is wrong")
+    row.password_hash = hash_password(body.new)
+    audit(db, f"admin:{user}", "admin.password_changed", detail=user)
+    return {"ok": True}

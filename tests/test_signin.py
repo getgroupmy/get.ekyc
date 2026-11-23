@@ -7,12 +7,14 @@ from tests.conftest import ADMIN
 def test_admin_password_sign_in_flow(client):
     from app.main import app
     # first admin is created with the token
-    r = client.post("/admin/api/admins", json={"username": "Kabeer", "password": "a-strong-passphrase"}, headers=ADMIN)
+    r = client.post("/admin/api/admins", json={"username": "Kabeer", "password": "a-strong-passphrase", "role": "owner"}, headers=ADMIN)
     assert r.status_code == 201 and r.json()["username"] == "kabeer"
     assert client.post("/admin/api/admins", json={"username": "x", "password": "short"}, headers=ADMIN).status_code == 422
+    client.post("/admin/api/admins", json={"username": "spare", "password": "another-passphrase", "role": "owner"}, headers=ADMIN)
 
     with TestClient(app) as browser:
-        assert browser.get("/admin/session/me").json() == {"username": None, "admins_exist": True}
+        anon = browser.get("/admin/session/me").json()
+        assert anon["username"] is None and anon["admins_exist"] and anon["permissions"] == []
         assert browser.get("/admin/api/stats").status_code == 401
         assert browser.post("/admin/session/login", json={"username": "kabeer", "password": "wrong"}).status_code == 401
         ok = browser.post("/admin/session/login", json={"username": "KABEER", "password": "a-strong-passphrase", "remember": True})
@@ -40,6 +42,10 @@ def test_admin_password_sign_in_flow(client):
     value, _ = make_session("kabeer", False)
     assert read_session(value) == "kabeer" and read_session(value.replace("kabeer", "admin1")) is None
     assert client.delete("/admin/api/admins/kabeer", headers=ADMIN).status_code == 204
+    from app.db import AdminUser, session_scope
+    with session_scope() as db:
+        for u in db.query(AdminUser).all():
+            db.delete(u)
     with TestClient(app) as old:
         old.cookies.set("ekyc_session", value, path="/admin")
         assert old.get("/admin/api/stats").status_code == 401

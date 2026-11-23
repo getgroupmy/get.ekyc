@@ -53,6 +53,7 @@ class ApiClient(Base):
     key_prefix: Mapped[str] = mapped_column(String(16))
     webhook_url: Mapped[str | None] = mapped_column(String(500))
     webhook_secret: Mapped[str | None] = mapped_column(EncryptedBytes)
+    created_by: Mapped[str | None] = mapped_column(String(60), index=True)  # console user ("token" = admin token)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
@@ -114,6 +115,7 @@ class AdminUser(Base):
     __tablename__ = "admin_users"
     username: Mapped[str] = mapped_column(String(60), primary_key=True)
     password_hash: Mapped[str] = mapped_column(String(200))
+    role: Mapped[str] = mapped_column(String(20), default="reviewer")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime)
 
@@ -181,6 +183,13 @@ def _migrate(engine) -> None:  # noqa: ANN001
     with engine.begin() as conn:
         if "phash" not in media_cols:
             conn.execute(text("ALTER TABLE media ADD COLUMN phash VARCHAR(16)"))
+        client_cols = {c["name"] for c in inspect(engine).get_columns("api_clients")}
+        if "created_by" not in client_cols:
+            conn.execute(text("ALTER TABLE api_clients ADD COLUMN created_by VARCHAR(60)"))
+        admin_cols = {c["name"] for c in inspect(engine).get_columns("admin_users")}
+        if "role" not in admin_cols:
+            # users created before roles existed keep full access
+            conn.execute(text("ALTER TABLE admin_users ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'owner'"))
         if "consent" not in cols:
             conn.execute(text("ALTER TABLE verifications ADD COLUMN consent JSON"))
         audit_cols = {c["name"] for c in inspect(engine).get_columns("audit_log")}
