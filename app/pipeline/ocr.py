@@ -2,6 +2,7 @@
 falls back to Tesseract with the OCR-B specific 'mrz' model."""
 from __future__ import annotations
 
+import os
 import shutil
 
 import cv2
@@ -11,8 +12,20 @@ import pytesseract
 from ..config import get_settings
 
 
+# Background services (nohup over ssh, launchd) don't get the login shell's
+# PATH, so Homebrew's tesseract is not found by name: look in the usual places.
+_TESSERACT_PLACES = ("/opt/homebrew/bin/tesseract", "/usr/local/bin/tesseract", "/usr/bin/tesseract")
+
+
+def _tesseract() -> str | None:
+    found = shutil.which("tesseract") or next((p for p in _TESSERACT_PLACES if os.path.exists(p)), None)
+    if found:
+        pytesseract.pytesseract.tesseract_cmd = found
+    return found
+
+
 def available() -> bool:
-    return shutil.which("tesseract") is not None
+    return _tesseract() is not None
 
 
 def _prep(img: np.ndarray, min_width: int = 1400) -> np.ndarray:

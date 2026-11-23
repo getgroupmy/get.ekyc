@@ -58,3 +58,16 @@ def test_active_liveness_other_person(monkeypatch):
 def test_challenge_is_a_permutation():
     seen = {tuple(liveness.new_challenge()) for _ in range(200)}
     assert all(sorted(c) == ["center", "left", "right"] for c in seen) and len(seen) > 1
+
+
+def test_tesseract_found_without_path(monkeypatch, tmp_path):
+    from app.pipeline import ocr
+    fake = tmp_path / "tesseract"
+    fake.write_text("")
+    monkeypatch.setattr(ocr.shutil, "which", lambda name: None)
+    monkeypatch.setattr(ocr, "_TESSERACT_PLACES", (str(tmp_path / "missing"), str(fake)))
+    assert ocr.available()
+    import pytesseract
+    assert pytesseract.pytesseract.tesseract_cmd == str(fake)
+    monkeypatch.setattr(ocr, "_TESSERACT_PLACES", (str(tmp_path / "missing"),))
+    assert not ocr.available()
