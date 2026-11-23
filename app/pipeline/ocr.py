@@ -3,7 +3,9 @@ falls back to Tesseract with the OCR-B specific 'mrz' model."""
 from __future__ import annotations
 
 import os
+import re
 import shutil
+import threading
 
 import cv2
 import numpy as np
@@ -58,9 +60,82 @@ def ink(img: np.ndarray, threshold: float = 0.55, width: int = 1600) -> np.ndarr
 _CARD_PASSES = ((0.55, False, 6), (0.55, True, 6), (0.55, True, 11), (0.65, False, 6))
 
 
+# --- PP-OCR (PaddleOCR models through RapidOCR) ---------------------------------------
+# A second, stronger reader next to Tesseract: reads the raw photo (no cleanup
+# needed), handles the security pattern well, and its readings join the votes.
+# Engine: onnxruntime (Mac mini, x86 with AVX) or openvino (Celeron NAS without
+# AVX, as get-ride's doc-reader), set with EKYC_OCR_ENGINE; "off" disables it.
+_rapid = None
+_rapid_failed = False
+_rapid_lock = threading.Lock()
+# MyKad micro-print in the background (KERAJAANMALAYSIA...) read as text boxes.
+_MICROPRINT = re.compile(r"KERAJAAN|RAJAAN|AJAANMA|SIAKERA|MALAYSIAKER")
+
+
+def _rapid_engine():
+    global _rapid, _rapid_failed
+    if _rapid is None and not _rapid_failed:
+        engine = os.environ.get("EKYC_OCR_ENGINE", "onnxruntime").lower()
+        if engine == "off":
+            _rapid_failed = True
+            return None
+        try:
+            import logging
+
+            from rapidocr import EngineType, RapidOCR
+            logging.getLogger("RapidOCR").setLevel(logging.WARNING)
+            e = EngineType.OPENVINO if engine == "openvino" else EngineType.ONNXRUNTIME
+            _rapid = RapidOCR(params={"Det.engine_type": e, "Cls.engine_type": e, "Rec.engine_type": e,
+                                      "Global.log_level": "warning"})
+        except Exception:  # noqa: BLE001 - not installed / no model: Tesseract alone
+            _rapid_failed = True
+    return _rapid
+
+
+def rapid_available() -> bool:
+    return _rapid_engine() is not None
+
+
+def _spaces(line: str) -> str:
+    """PP-OCR sometimes drops a space: after A/L, A/P, BIN(TI) and a postcode."""
+    line = re.sub(r"\bA/([LP])(?=[A-Z])", r"A/\1 ", line)
+    line = re.sub(r"(?<!\d)(\d{5})(?=[A-Z]{3})", r"\1 ", line)
+    return line
+
+
+def read_rapid(img: np.ndarray, min_score: float = 0.6) -> str:
+    """One PP-OCR reading as text lines, top to bottom (boxes on the same row
+    joined left to right). '' when the engine is not available."""
+    eng = _rapid_engine()
+    if eng is None:
+        return ""
+    with _rapid_lock:
+        try:
+            r = eng(img)
+        except Exception:  # noqa: BLE001
+            return ""
+    if not r or r.txts is None:
+        return ""
+    items = []
+    for box, txt, score in zip(r.boxes, r.txts, r.scores):
+        if score < min_score or _MICROPRINT.search(txt.upper()):
+            continue
+        ys = [p[1] for p in box]
+        items.append(((min(ys) + max(ys)) / 2, max(ys) - min(ys), min(p[0] for p in box), txt))
+    items.sort()
+    lines: list[list] = []
+    for cy, hgt, x, txt in items:
+        if lines and abs(cy - lines[-1][0]) < 0.5 * max(hgt, lines[-1][1]):
+            lines[-1][2].append((x, txt))
+        else:
+            lines.append([cy, hgt, [(x, txt)]])
+    return "\n".join(_spaces(" ".join(t for _, t in sorted(parts))) for _, _, parts in lines)
+
+
 def read_texts(img: np.ndarray) -> list[str]:
-    """Several OCR readings of a card or document page, one per cleanup pass."""
-    out = []
+    """Several OCR readings of a card or document page: PP-OCR on the photo,
+    then Tesseract once per cleanup pass."""
+    out = [t for t in (read_rapid(img),) if t]
     cache: dict[float, np.ndarray] = {}
     for threshold, thicken, psm in _CARD_PASSES:
         m = cache.setdefault(threshold, ink(img, threshold))
