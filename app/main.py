@@ -13,7 +13,7 @@ from . import service
 from .config import get_settings
 from .db import get_db, init_db
 from .pipeline import face, liveness, ocr
-from .routers import admin, compat, verifications
+from .routers import admin, compat, session, verifications
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("ekyc")
@@ -54,6 +54,7 @@ if _origins:
 app.include_router(verifications.router)
 app.include_router(admin.router)
 app.include_router(compat.router)
+app.include_router(session.router)
 
 
 @app.get("/health", tags=["system"])

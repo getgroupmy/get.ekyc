@@ -7,11 +7,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .. import crypto, service, storage, webhooks
-from ..auth import new_api_key, require_admin
+from ..auth import hash_password, new_api_key, require_admin
 from ..config import get_settings
-from ..db import ApiClient, AuditLog, BlockedFace, Media, SampleDoc, Verification, audit, get_db, utcnow
+from ..db import AdminUser, ApiClient, AuditLog, BlockedFace, Media, SampleDoc, Verification, audit, get_db, utcnow
 from ..pipeline import catalog, images, integrity, mykad
 from ..pipeline.detect import detect as detect_document
+from pydantic import BaseModel, Field
+
 from ..schemas import CreateClient, Decision, verification_out
 
 router = APIRouter(prefix="/admin/api", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -129,7 +131,7 @@ def list_verifications(status: str | None = None, kind: str = "all", limit: int 
 
 
 @router.get("/verifications/{vid}")
-def get_verification(vid: str, db: Session = Depends(get_db)):
+def get_verification(vid: str, db: Session = Depends(get_db), actor: str = Depends(require_admin)):
     v = db.get(Verification, vid)
     if v is None:
         raise HTTPException(404, "verification not found")
@@ -137,7 +139,7 @@ def get_verification(vid: str, db: Session = Depends(get_db)):
     log = db.scalars(select(AuditLog).where(AuditLog.verification_id == vid).order_by(AuditLog.id))
     out["audit"] = [{"at": a.at.isoformat() + "Z", "actor": a.actor, "action": a.action, "detail": a.detail}
                     for a in log]
-    audit(db, "admin", "verification.viewed", vid)
+    audit(db, actor, "verification.viewed", vid)
     return out
 
 
@@ -153,7 +155,7 @@ def get_media(mid: str, db: Session = Depends(get_db)):
 
 
 @router.post("/verifications/{vid}/decision")
-def decide(vid: str, body: Decision, db: Session = Depends(get_db)):
+def decide(vid: str, body: Decision, db: Session = Depends(get_db), actor: str = Depends(require_admin)):
     v = db.get(Verification, vid)
     if v is None:
         raise HTTPException(404, "verification not found")
@@ -167,23 +169,23 @@ def decide(vid: str, body: Decision, db: Session = Depends(get_db)):
         v.reasons = []
     elif not v.reasons:
         v.reasons = ["rejected_by_reviewer"]
-    audit(db, "admin", f"verification.manual_{body.decision}", v.id)
+    audit(db, actor, f"verification.manual_{body.decision}", v.id)
     db.flush()
     webhooks.notify(v, v.client)
     return verification_out(v, service.required_media(v), admin=True)
 
 
 @router.delete("/verifications/{vid}", status_code=204)
-def erase(vid: str, db: Session = Depends(get_db)):
+def erase(vid: str, db: Session = Depends(get_db), actor: str = Depends(require_admin)):
     """A test is deleted entirely; a real verification is erased (images and
     personal data removed, the record and audit trail kept)."""
     v = db.get(Verification, vid)
     if v is None:
         raise HTTPException(404, "verification not found")
     if v.is_test:
-        service.delete_entirely(db, v, "admin")
+        service.delete_entirely(db, v, actor)
     else:
-        service.erase(db, v, "admin")
+        service.erase(db, v, actor)
 
 
 SLOTS = ("document_front", "document_back", "selfie")
@@ -345,7 +347,8 @@ async def try_verification(
 
 # --- face blocklist (all clients) ----------------------------------------------------------
 @router.post("/verifications/{vid}/block")
-def block_person(vid: str, reason: str = Form("confirmed fraud"), db: Session = Depends(get_db)):
+def block_person(vid: str, reason: str = Form("confirmed fraud"), db: Session = Depends(get_db),
+                 actor: str = Depends(require_admin)):
     """Add this verification's selfie face to the blocklist and reject it."""
     v = db.get(Verification, vid)
     if v is None or not v.face_embedding:
@@ -356,7 +359,7 @@ def block_person(vid: str, reason: str = Form("confirmed fraud"), db: Session = 
     if v.status in service.FINAL:
         v.status, v.decided_by, v.completed_at = "rejected", "admin", utcnow()
         v.reasons = ["face_blocklisted"]
-    audit(db, "admin", "face.blocked", v.id, detail=b.id)
+    audit(db, actor, "face.blocked", v.id, detail=b.id)
     db.flush()
     webhooks.notify(v, v.client)
     return {"id": b.id}
@@ -402,3 +405,38 @@ def learning_report(db: Session = Depends(get_db)):
     """What reviewers' decisions say about the engine, with suggestions (never applied automatically)."""
     from .. import learning
     return learning.report(db)
+
+
+# --- console users ---------------------------------------------------------------------------
+class NewAdmin(BaseModel):
+    username: str = Field(min_length=3, max_length=60, pattern=r"^[a-zA-Z0-9._-]+$")
+    password: str = Field(min_length=10, max_length=200)
+
+
+@router.get("/admins")
+def list_admins(db: Session = Depends(get_db)):
+    return {"items": [{"username": a.username, "created_at": a.created_at.isoformat() + "Z",
+                       "last_login_at": a.last_login_at.isoformat() + "Z" if a.last_login_at else None}
+                      for a in db.scalars(select(AdminUser).order_by(AdminUser.created_at))]}
+
+
+@router.post("/admins", status_code=201)
+def add_admin(body: NewAdmin, db: Session = Depends(get_db), actor: str = Depends(require_admin)):
+    name = body.username.lower()
+    existing = db.get(AdminUser, name)
+    if existing:  # same name again = change its password
+        existing.password_hash = hash_password(body.password)
+        audit(db, actor, "admin.password_changed", detail=name)
+        return {"username": name, "changed": True}
+    db.add(AdminUser(username=name, password_hash=hash_password(body.password)))
+    audit(db, actor, "admin.created", detail=name)
+    return {"username": name, "changed": False}
+
+
+@router.delete("/admins/{username}", status_code=204)
+def delete_admin(username: str, db: Session = Depends(get_db), actor: str = Depends(require_admin)):
+    a = db.get(AdminUser, username.lower())
+    if a is None:
+        raise HTTPException(404, "not found")
+    db.delete(a)
+    audit(db, actor, "admin.deleted", detail=a.username)

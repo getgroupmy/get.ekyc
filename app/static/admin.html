@@ -56,18 +56,34 @@
     <button data-tab="queue" class="on">Verifications</button>
     <button data-tab="clients">API clients</button>
     <button data-tab="try">Try it</button>
+    <button data-tab="admins">Admins</button>
   </nav>
   <span style="flex:1"></span>
   <span id="health" class="mute"></span>
+  <span id="whoami" class="mute" style="margin-left:8px"></span>
   <button class="btn hide" id="logout">Sign out</button>
 </header>
 <main>
   <section id="login" class="card" style="max-width:420px;margin:60px auto">
     <h2>Sign in</h2>
-    <label for="token">Admin token (EKYC_ADMIN_TOKEN)</label>
-    <input id="token" type="password" autocomplete="current-password">
-    <p id="loginErr" class="rejected"></p>
-    <button class="btn primary" id="loginBtn">Continue</button>
+    <form id="pwform" autocomplete="on" onsubmit="return false">
+      <label for="user">Username</label>
+      <input id="user" name="username" autocomplete="username">
+      <label for="pass">Password</label>
+      <input id="pass" name="password" type="password" autocomplete="current-password">
+      <label class="mute" style="margin-top:10px"><input id="remember" type="checkbox" style="width:auto"> Keep me signed in on this device (30 days)</label>
+      <p id="loginErr" class="rejected"></p>
+      <button class="btn primary" id="pwBtn" type="submit">Sign in</button>
+      <button class="btn" id="useToken" type="button" style="margin-left:6px">Use admin token instead</button>
+    </form>
+    <div id="tokform" class="hide">
+      <label for="token">Admin token (EKYC_ADMIN_TOKEN)</label>
+      <input id="token" type="password" autocomplete="off">
+      <p id="tokErr" class="rejected"></p>
+      <button class="btn primary" id="loginBtn">Continue</button>
+      <button class="btn" id="usePw" type="button" style="margin-left:6px">Use username and password</button>
+    </div>
+    <p id="firstrun" class="mute hide">No admin accounts yet. Sign in once with the admin token, then create your username and password under <b>Admins</b>.</p>
   </section>
 
   <section id="queue" class="hide">
@@ -146,6 +162,19 @@
       </div>
     </div>
   </section>
+  <section id="admins" class="hide">
+    <div class="card">
+      <h2>Console users</h2>
+      <p class="mute">Each person signs in with their own username and password; the audit trail shows who approved, rejected or blocked. Entering an existing username sets a new password. The admin token still works as a fallback.</p>
+      <table><thead><tr><th>Username</th><th>Created</th><th>Last sign-in</th><th></th></tr></thead><tbody id="arows"></tbody></table>
+      <div class="grid" style="margin-top:10px">
+        <div><label for="auser">Username</label><input id="auser" autocomplete="off" placeholder="e.g. kabeer"></div>
+        <div><label for="apass">Password (10+ characters)</label><input id="apass" type="password" autocomplete="new-password"></div>
+        <div><label>&nbsp;</label><button class="btn primary" id="aadd">Save user</button></div>
+      </div>
+      <p id="amsg" class="mute"></p>
+    </div>
+  </section>
 </main>
 <script>
 const $ = id => document.getElementById(id);
@@ -166,26 +195,53 @@ const json = async (path, opts) => (await api(path, opts)).json();
 const pill = s => h("span", { class: "pill " + s }, s);
 const when = t => t ? new Date(t).toLocaleString() : "";
 
-function signOut() { token = ""; sessionStorage.removeItem("ekyc_admin"); show(false); }
+async function signOut() {
+  token = ""; sessionStorage.removeItem("ekyc_admin");
+  await fetch("/admin/session/logout", { method: "POST" }).catch(() => {});
+  $("whoami").textContent = ""; show(false);
+}
+const TABS = ["queue", "clients", "try", "admins"];
 function show(authed) {
   $("login").classList.toggle("hide", authed);
   for (const id of ["nav", "logout"]) $(id).classList.toggle("hide", !authed);
-  for (const id of ["queue", "clients", "try"]) $(id).classList.add("hide");
+  for (const id of TABS) $(id).classList.add("hide");
   if (authed) tab("queue");
 }
 function tab(name) {
   for (const b of $("nav").children) b.classList.toggle("on", b.dataset.tab === name);
-  for (const id of ["queue", "clients", "try"]) $(id).classList.toggle("hide", id !== name);
+  for (const id of TABS) $(id).classList.toggle("hide", id !== name);
   if (name === "queue") { loadQueue(); loadLearning().catch(() => {}); sanctionsLine().then(t => { if (t) $("health").textContent = $("health").textContent.split(" · sanctions")[0] + t; }); }
   if (name === "clients") loadClients();
   if (name === "try") loadTryClients();
+  if (name === "admins") loadAdmins();
 }
 $("nav").addEventListener("click", e => e.target.dataset.tab && tab(e.target.dataset.tab));
 $("logout").onclick = signOut;
+$("useToken").onclick = () => { $("pwform").classList.add("hide"); $("tokform").classList.remove("hide"); $("token").focus(); };
+$("usePw").onclick = () => { $("tokform").classList.add("hide"); $("pwform").classList.remove("hide"); $("user").focus(); };
+$("pwBtn").onclick = async () => {
+  const r = await fetch("/admin/session/login", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: $("user").value.trim(), password: $("pass").value, remember: $("remember").checked }) });
+  if (!r.ok) { $("loginErr").textContent = r.status === 429 ? "Too many attempts: wait 15 minutes." : "Wrong username or password."; return; }
+  $("pass").value = ""; $("loginErr").textContent = ""; $("whoami").textContent = (await r.json()).username; show(true);
+};
 $("loginBtn").onclick = async () => {
   token = $("token").value.trim();
-  try { await json("/stats"); sessionStorage.setItem("ekyc_admin", token); $("loginErr").textContent = ""; show(true); }
-  catch { $("loginErr").textContent = "That token was not accepted."; }
+  try { await json("/stats"); sessionStorage.setItem("ekyc_admin", token); $("tokErr").textContent = ""; $("whoami").textContent = "token"; show(true); }
+  catch { $("tokErr").textContent = "That token was not accepted."; }
+};
+async function loadAdmins() {
+  const list = await json("/admins");
+  $("arows").replaceChildren(...list.items.map(a => h("tr", {}, h("td", {}, a.username), h("td", {}, when(a.created_at)),
+    h("td", {}, when(a.last_login_at) || "—"),
+    h("td", {}, h("button", { class: "btn danger", onclick: async () => { if (confirm(`Remove ${a.username}?`)) { await api("/admins/" + a.username, { method: "DELETE" }); loadAdmins(); } } }, "Remove")))));
+}
+$("aadd").onclick = async () => {
+  try {
+    const r = await json("/admins", { method: "POST", body: JSON.stringify({ username: $("auser").value.trim(), password: $("apass").value }) });
+    $("amsg").textContent = r.changed ? `Password changed for ${r.username}.` : `${r.username} can now sign in.`;
+    $("apass").value = ""; loadAdmins();
+  } catch (e) { $("amsg").textContent = "Not saved: username 3+ letters/digits, password 10+ characters."; }
 };
 $("token").addEventListener("keydown", e => e.key === "Enter" && $("loginBtn").click());
 
@@ -399,7 +455,11 @@ async function sanctionsLine() {
 }
 fetch("/health").then(r => r.json()).then(s => $("health").textContent =
   s.status === "ok" ? "engine ready" + (s.passive_liveness ? " · passive liveness on" : "") : "engine degraded — check models");
-if (token) json("/stats").then(() => show(true)).catch(() => {});
+fetch("/admin/session/me").then(r => r.json()).then(m => {
+  if (m.username) { $("whoami").textContent = m.username; show(true); }
+  else if (token) json("/stats").then(() => { $("whoami").textContent = "token"; show(true); }).catch(() => {});
+  if (!m.admins_exist) { $("firstrun").classList.remove("hide"); $("useToken").click(); }
+}).catch(() => {});
 </script>
 </body>
 </html>

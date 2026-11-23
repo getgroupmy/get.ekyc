@@ -109,6 +109,15 @@ class SampleDoc(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class AdminUser(Base):
+    """A person who can sign in to the console (password hashed with scrypt)."""
+    __tablename__ = "admin_users"
+    username: Mapped[str] = mapped_column(String(60), primary_key=True)
+    password_hash: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class BlockedFace(Base):
     """A confirmed fraudster's face: refused for every client from then on."""
     __tablename__ = "blocked_faces"
