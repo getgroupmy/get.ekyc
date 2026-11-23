@@ -35,11 +35,13 @@ def _words(name: str) -> list[str]:
 
 def _split(name: str) -> tuple[list[str], list[str]]:
     """(own names, father's names), connectors removed."""
+    from .mykad import connector  # OCR slips such as AIL for A/L
+
     own: list[str] = []
     father: list[str] = []
     side = own
     for w in _words(name):
-        if w in CONNECTORS:
+        if w in CONNECTORS or (side is own and own and connector(w)):
             side = father
             continue
         side.append(w)

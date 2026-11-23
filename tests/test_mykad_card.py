@@ -211,3 +211,25 @@ def test_wording_rules():
     assert countrylib.from_wording(["REPUBLIK INDONESIA\nPROVINSI JAWA BARAT"])[0] == "IDN"
     assert countrylib.from_wording(["MALAYSIA"])[0] is None          # one weak word is not enough
     assert countrylib.from_wording(["JALAN SINGAPORE 5\nKAD PENGENALAN MALAYSIA"])[0] == "MYS"
+
+
+@pytest.mark.parametrize("slip", ["AIL", "A1L", "A|L", "A.L", "AL.", "A/L", "AJL"])
+def test_ocr_slips_of_a_l_join_the_name(slip):
+    text = f"KAD PENGENALAN\n900514-10-5231\nARJUN SINGH DHILLON\n{slip} HARPAL SINGH\nC-1-6 TAMAN MAWAR\n43000 KAJANG\nSELANGOR\n"
+    card = mykad.read_card([text])
+    assert card["full_name"] == "ARJUN SINGH DHILLON A/L HARPAL SINGH", slip
+    assert card["address"] == "C-1-6 TAMAN MAWAR, 43000 KAJANG, SELANGOR"
+
+
+def test_connector_slips():
+    assert mykad.connector("B1N") == "BIN" and mykad.connector("BINT1") == "BINTI" and mykad.connector("AIP") == "A/P"
+    assert mykad.connector("ALI") is None and mykad.connector("ABU") is None and mykad.connector("BINA") is None
+    assert names.match("arjun singh dhillon", ["ARJUN SINGH DHILLON AIL HARPAL SINGH"])[0]
+    assert not names.match("harpal singh", ["ARJUN SINGH DHILLON AIL HARPAL SINGH"])[0]
+
+
+def test_shown_name_is_the_best_supported_reading():
+    base = "KAD PENGENALAN\n900514-10-5231\n{}\nC-1-6 TAMAN MAWAR\n43000 KAJANG\nSELANGOR\n"
+    texts = [base.format("ARJUN SIRGH DHILLON\nA/L HARPAL"), base.format("ARJUN SINGH DHILLON\nAML HARPAL SINGH"),
+             base.format("ARJUN SINGH DHILLON\nA/L HARPAL SINGH"), base.format("ARJUN\nA/L HARPAL SINGH")]
+    assert mykad.read_card(texts)["full_name"] == "ARJUN SINGH DHILLON A/L HARPAL SINGH"

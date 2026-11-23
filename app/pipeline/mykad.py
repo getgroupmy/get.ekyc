@@ -113,16 +113,38 @@ def _printed_run(line: str, digits: bool) -> list[str]:
     allowed = r"[A-Z0-9][A-Z0-9/'@.,&-]*" if digits else r"[A-Z][A-Z/'@.-]*|@"
     out: list[str] = []
     for tok in line.split():
+        if not digits and connector(tok):  # A1L, A|L ... before the letters-only rule drops them
+            out.append(tok)
+            continue
         if not re.fullmatch(allowed, tok) or _is_right_column(tok):
             break
         if not digits and len(tok) == 1 and tok not in ("@", "B"):
             break
         out.append(tok.strip(","))
-    if not digits:  # OCR reads A/L as AL. or A/L. - write the connectors one way
-        fix = {"AL": "A/L", "AP": "A/P", "A/L": "A/L", "A/P": "A/P", "BT": "BT", "S/O": "S/O", "D/O": "D/O"}
-        out = [fix.get(t.rstrip(".").replace(".", ""), t.rstrip(".") if t.endswith(".") and len(t) <= 4 else t)
-               for t in out]
+    if not digits:
+        out = [connector(t) or (t.rstrip(".") if t.endswith(".") and len(t) <= 4 else t) for t in out]
     return [t for t in out if t]
+
+
+# How OCR misreads the connectors printed in Malaysian names: the slash in A/L
+# comes out as I, 1, l, |, J, a dot or nothing; I in BIN/BINTI as 1 or L.
+_CONNECTOR_SLIPS = (
+    (re.compile(r"A[/I1L|JM\\.,]?L\.?"), "A/L"),
+    (re.compile(r"A[/I1L|JM\\.,]?P\.?"), "A/P"),
+    (re.compile(r"[B8][I1L|]N"), "BIN"),
+    (re.compile(r"[B8][I1L|]NT[I1L|]"), "BINTI"),
+    (re.compile(r"[B8]T[E]?\.?"), "BT"),
+    (re.compile(r"[SD][/I1L|]?O\.?"), None),  # S/O, D/O: keep the letter
+)
+
+
+def connector(token: str) -> str | None:
+    """The connector a token stands for (A/L, A/P, BIN, BINTI, BT, S/O, D/O), or None."""
+    t = token.upper()
+    for pattern, name in _CONNECTOR_SLIPS:
+        if pattern.fullmatch(t):
+            return name or f"{t[0]}/O"
+    return None
 
 
 def _lines_after_number(text: str, number: str) -> list[str] | None:
@@ -139,7 +161,8 @@ def _name_and_rest(lines: list[str]) -> tuple[str | None, list[str]]:
     i = 0
     while i < len(lines) and i < 4:
         words = _printed_run(lines[i], digits=False)
-        if parts and re.match(r"\S*\d", lines[i]):  # the address starts (C-1-6 ..., 12 JALAN ...)
+        first = lines[i].split()[0] if lines[i].split() else ""
+        if parts and re.match(r"\S*\d", lines[i]) and not connector(first):  # the address starts (C-1-6, 12 JALAN)
             break
         if len(" ".join(words)) < 3 or set(words) & _HEADER:
             i += 1
@@ -216,7 +239,15 @@ def read_card(front_texts: list[str], back_texts: list[str] | None = None) -> di
         a = _address_from(rest) if n else None
         if n and (name is None or (a and not address) or (a and address and len(a["address"]) > len(address["address"]))):
             name, address = n, a or address
+    if readings:
+        # Show the reading whose words the other readings agree with most;
+        # longer wins a tie, so a cut-off reading does not.
+        def support(r: str) -> tuple[int, int]:
+            return (sum(sum(w in o.split() for o in readings) for w in r.split()), len(r.split()))
+        name = max(readings, key=support)
     name = name and re.sub(r"\s+", " ", name)
+    while name and name.split()[-1] in _CONNECTORS:  # father's name lost to blur: no dangling A/L
+        name = " ".join(name.split()[:-1]) or None
     side = lambda c: c.most_common(1)[0][0] if c else None  # noqa: E731
     return {
         **parsed,
