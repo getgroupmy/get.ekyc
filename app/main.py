@@ -5,15 +5,15 @@ import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 
 from . import service
 from .config import get_settings
-from .db import init_db
+from .db import get_db, init_db
 from .pipeline import face, liveness, ocr
-from .routers import admin, verifications
+from .routers import admin, compat, verifications
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("ekyc")
@@ -53,12 +53,16 @@ if _origins:
 
 app.include_router(verifications.router)
 app.include_router(admin.router)
+app.include_router(compat.router)
 
 
 @app.get("/health", tags=["system"])
-def health():
+def health(request: Request, db=Depends(get_db)):  # noqa: ANN001
+    denied = compat.health_key_check(request, db)
+    if denied:
+        return denied
     ready = face.models_available() and ocr.available()
-    return {"status": "ok" if ready else "degraded", "face_models": face.models_available(),
+    return {"status": "ok" if ready else "degraded", "model": compat.MODEL, "face_models": face.models_available(),
             "ocr": ocr.available(), "passive_liveness": liveness.passive_available()}
 
 

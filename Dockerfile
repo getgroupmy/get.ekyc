@@ -1,5 +1,6 @@
 # Multi-arch: builds natively on Apple Silicon (arm64) and Intel/AMD Synology (amd64).
-FROM python:3.12-slim
+# Same base as get-ride's deploy/face-server, which runs on the DS224+ (Celeron J4125).
+FROM python:3.11.10-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     EKYC_DATA_DIR=/data EKYC_MODELS_DIR=/app/models

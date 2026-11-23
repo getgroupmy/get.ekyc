@@ -1,14 +1,19 @@
 services:
   ekyc:
     build: .
-    image: get-ekyc:latest
+    image: get-ekyc:1
+    container_name: ekyc
     restart: unless-stopped
     env_file: .env
+    # Peak use measured at ~370 MB for one verification; models stay loaded.
+    mem_limit: 1g
     ports:
-      - "${EKYC_PORT:-8080}:8080"
+      # Published on localhost only: the Cloudflare tunnel below reaches the
+      # container over the compose network, so nothing is exposed on the LAN.
+      # Use "8080:8080" instead to open the console from other LAN machines.
+      - "127.0.0.1:${EKYC_PORT:-8080}:8080"
     volumes:
-      # Encrypted images + database. On Synology point this at a shared folder,
-      # e.g. /volume1/docker/ekyc:/data
+      # Encrypted images + database. On the Synology: /volume1/docker/ekyc/data
       - ${EKYC_DATA_PATH:-./data}:/data
     read_only: true
     tmpfs:
@@ -17,3 +22,18 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+
+  # Optional HTTPS without opening a port, as get-ride's face-server does.
+  # Start with: docker compose --profile tunnel up -d
+  # In Cloudflare Zero Trust, point the tunnel's public hostname (e.g.
+  # ekyc.getride.my) at service HTTP  ekyc:8080, and put TUNNEL_TOKEN in .env.
+  tunnel:
+    image: cloudflare/cloudflared:2024.10.1
+    container_name: ekyc-tunnel
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
+    depends_on:
+      - ekyc

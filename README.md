@@ -42,21 +42,57 @@ openssl rand -base64 32   # EKYC_STORAGE_KEY
 docker compose up -d --build
 ```
 
-Open `http://<host>:8080/admin`, sign in with the admin token, create an API client under
-**API clients**, and copy its key. The **Try it** tab runs a verification from the browser.
-Interactive API docs are at `/docs`.
+Open `http://localhost:8080/admin` on the host, sign in with the admin token, create an API client
+under **API clients**, and copy its key. The **Try it** tab runs a verification from the browser.
+Interactive API docs are at `/docs`. The port is published on localhost only; change it to
+`"8080:8080"` in `docker-compose.yml` to reach the console from other LAN machines.
 
-**Mac mini** — install Docker Desktop or OrbStack and run the commands above. Enable "start at login"
-so the service returns after a reboot (`restart: unless-stopped` handles the rest).
+### On the GET Synology (DS224+)
 
-**Synology** — needs an Intel/AMD model with Container Manager (DSM 7.2+). Copy this folder to the NAS,
-set `EKYC_DATA_PATH=/volume1/docker/ekyc` in `.env`, then create a Project in Container Manager from
-`docker-compose.yml`, or run `docker compose up -d --build` over SSH. Give the container at least 1 GB RAM.
-A verification took about one second on a 4-core x86 test machine; expect it to be slower on a Celeron NAS. They are processed one at a time.
+This follows the same pattern as get-ride's `deploy/face-server`, which already runs on that NAS
+(Celeron J4125, x86-64, no AVX, Container Manager, DSM 7.2+):
 
-**Exposing it** — the container speaks plain HTTP. Put it behind HTTPS before any phone talks to it:
-Synology reverse proxy with a Let's Encrypt certificate, Caddy, Cloudflare Tunnel or Tailscale.
-Only `/v1/*` needs to be reachable from your app's backend; keep `/admin` on the LAN or VPN.
+1. In File Station create `docker/ekyc` on volume1, and `docker/ekyc/data` inside it. Only
+   `administrators` should have access to the `docker` share.
+2. Copy this repository's files into `/volume1/docker/ekyc`. Copy `.env.example` to `.env` there, then
+   fill in `EKYC_ADMIN_TOKEN`, `EKYC_STORAGE_KEY`, `EKYC_DATA_PATH=/volume1/docker/ekyc/data` and
+   `TUNNEL_TOKEN`. Type the secrets on the NAS; never send them through chat, email or git.
+3. In Cloudflare Zero Trust, create a tunnel (for example `getride-ekyc`) and add a public hostname
+   such as `ekyc.getride.my` with service **HTTP** `ekyc:8080`. Copy its token into `TUNNEL_TOKEN`.
+4. Container Manager, **Project**, **Create**: path `/volume1/docker/ekyc`, source `docker-compose.yml`.
+   To include the tunnel, run `docker compose --profile tunnel up -d --build` over SSH instead, because
+   the Project screen does not pass `--profile`.
+5. Check `https://ekyc.getride.my/health`. It should return `"status": "ok"` and `"model": "SFace"`.
+
+No router port is opened, and Cloudflare provides HTTPS. Block `/admin*` at Cloudflare, with an Access
+policy or a WAF rule for that path, so the console is reachable only on the NAS itself or through
+Cloudflare Access. In tests here a verification took about 1 s and peaked at about 370 MB of memory;
+the compose file caps the container at 1 GB. Verifications run one at a time.
+
+Follow get-ride's rule from `docs/NAS.md`: the app must keep working when the NAS is off. Treat
+this service as a check that can be unavailable, not a hard dependency of sign-up or going online.
+
+**Mac mini**: install Docker Desktop or OrbStack, run the same commands, and enable "start at login".
+
+### Relationship to get-ride's face-server
+
+`deploy/face-server` (live at `face.getride.my`) only compares two photos. This service does the
+same comparison with the same models and threshold, and adds document reading, liveness, duplicates
+and a review queue. It also serves face-server's API unchanged:
+
+- `POST /compare` with header `x-api-key` and body `{"image1": "<base64>", "image2": "<base64>"}`
+  returns `{"similarity", "model": "SFace", "verified", "cosine"}`. `similarity` uses the same
+  0 to 1 scale, where the 0.363 cosine threshold shows as 80%.
+- `422 {"error":"no_face"}`, `400 {"error":"bad_image"}`, `413 {"error":"too_large"}`, `401`.
+- `GET /health` returns `model`, and returns 401 when a wrong `x-api-key` is sent.
+- Photos sent to `/compare` are compared in memory and never stored.
+
+To switch get-ride's existing `face-compare` edge function to this service without changing app
+code, create an API client here, then in GET-Ride go to **Admin, Settings, API Keys, Face match
+server** and set it to `https://ekyc.getride.my:<ek_ key>`. Both services can run side by side
+until you retire face-server. **This switch has not been tried against the live function yet:**
+`/compare` was built to the contract described in that session, not tested against
+`supabase/functions/_shared/face_server.ts`, which this repository cannot see.
 
 ## Integrating (get-ride or any app)
 
