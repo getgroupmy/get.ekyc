@@ -53,6 +53,15 @@ def test_passport_approved_then_duplicate_then_erased(client, api_key, need_mode
     body = {"document_type": "passport", "country": "UTO", "external_ref": "rider-1",
             "claimed": {"full_name": "Anna Maria Eriksson", "document_number": "L898902C3", "date_of_birth": "1974-08-12"}}
     v = _run(client, api_key, body, files)
+    try:
+        _approved_then_duplicate(client, api_key, body, files, v)
+    finally:
+        # Erase even when an assertion fails, so this approved face can't turn
+        # later tests into duplicate_face reviews.
+        client.delete(f"{BASE}/{v['id']}", headers=api_key)
+
+
+def _approved_then_duplicate(client, api_key, body, files, v):
     assert v["status"] == "approved", v
     assert v["result"]["extracted"]["document_number"] == "L898902C3"
     assert v["result"]["extracted"]["full_name"] == "ANNA MARIA ERIKSSON"
@@ -61,6 +70,13 @@ def test_passport_approved_then_duplicate_then_erased(client, api_key, need_mode
 
     # same passport under another account -> flagged for manual review
     dup = _run(client, api_key, {**body, "external_ref": "rider-2"}, files)
+    try:
+        _review_duplicate(client, api_key, v, dup)
+    finally:
+        client.delete(f"/admin/api/verifications/{dup['id']}", headers=ADMIN)
+
+
+def _review_duplicate(client, api_key, v, dup):
     assert dup["status"] == "review" and "duplicate_document" in dup["reasons"]
     assert dup["reason_details"][0]["message"]
 

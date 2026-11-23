@@ -7,8 +7,29 @@ from PIL import Image, ImageDraw, ImageFont
 
 from app.pipeline.mrz import check_digit
 
-MONO = "/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf"
-SANS = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+from pathlib import Path
+
+
+def _first(*paths: str) -> str:
+    """First font that exists. Passports print the MRZ in a monospace font
+    (OCR-B); drawing it in a proportional one makes the reader drop letters such
+    as I, so the tests need a real monospace font on every platform."""
+    return next((p for p in paths if Path(p).exists()), paths[0])
+
+
+MONO = _first(
+    "/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf",  # Debian / Ubuntu
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+    "/System/Library/Fonts/Supplemental/Courier New Bold.ttf",  # macOS
+    "/System/Library/Fonts/Menlo.ttc",
+    "/Library/Fonts/Courier New Bold.ttf",
+)
+SANS = _first(
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",
+)
 
 
 def td3_lines(surname="ERIKSSON", given="ANNA MARIA", number="L898902C3", country="UTO",
@@ -23,7 +44,8 @@ def _font(path: str, size: int):
     try:
         return ImageFont.truetype(path, size)
     except OSError:
-        return ImageFont.load_default(size)
+        import pytest
+        pytest.skip(f"no usable font for the synthetic documents ({path}); install fonts-liberation or fonts-dejavu")
 
 
 def face_bgr() -> np.ndarray:

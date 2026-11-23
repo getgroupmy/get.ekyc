@@ -234,6 +234,22 @@ All thresholds are in `.env.example`.
 If a regulator requires certified eKYC (for example Bank Negara for financial products), use this as the
 first line and add a certified provider for those flows.
 
+## Measured speed
+
+`scripts/benchmark.py` on synthetic documents, 23 Nov 2026:
+
+| Check | Mac mini M6, 12 cores, 16 GB | Test machine, 4-core Xeon |
+|---|---|---|
+| Face compare (`/compare`) | 0.04 s · 1,368 a minute | 0.12 s · ~490 a minute |
+| Passport + selfie | 0.27 s · 221 a minute | 0.82 s · ~73 a minute |
+| Passport + selfie + 3 liveness frames | 0.34 s · 179 a minute | 1.19 s · ~50 a minute |
+| MyKad + selfie | 0.82 s · 73 a minute | 2.33 s · ~26 a minute |
+
+"A minute" is the service as shipped: one check at a time, each spread over all cores. With one
+worker per core the Mac mini's ceiling is about 2,000 passport checks or 490 MyKad checks a minute,
+but that needs a code change. The DS224+ has not been measured; expect it to be several times slower
+than the Xeon because it has no AVX. To measure it, run the benchmark inside the container there.
+
 ## Measuring accuracy on real documents
 
 Every test in this repository uses made-up documents. Before relying on the results, measure them
