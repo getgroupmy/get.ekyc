@@ -4,7 +4,7 @@ import re
 import secrets
 from datetime import timedelta
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -32,8 +32,19 @@ def _open(v: Verification) -> None:
         raise HTTPException(410, "verification session expired, create a new one")
 
 
+def issue_link(v: Verification, request: Request) -> dict:
+    """A new hosted-verification link for `v` (any earlier one stops working).
+    The token is shown once; only its hash is kept."""
+    token = secrets.token_urlsafe(32)
+    v.hosted_token_hash = crypto.sha256_hex(token)
+    base = (get_settings().public_url or str(request.base_url)).rstrip("/")
+    expires = v.created_at + timedelta(minutes=get_settings().session_ttl_minutes)
+    return {"hosted_url": f"{base}/v/{token}", "hosted_url_expires_at": expires.isoformat() + "Z"}
+
+
 @router.post("", status_code=201)
-def create(body: CreateVerification, client: ApiClient = Depends(require_client), db: Session = Depends(get_db)):
+def create(body: CreateVerification, request: Request, client: ApiClient = Depends(require_client),
+           db: Session = Depends(get_db)):
     s = get_settings()
     typed = body.claimed.document_number if body.claimed else None
     if typed and (body.country or "").upper() == "MYS" and body.document_type == "national_id":
@@ -52,12 +63,24 @@ def create(body: CreateVerification, client: ApiClient = Depends(require_client)
         claimed=body.claimed.model_dump(mode="json", exclude_none=True) if body.claimed else None,
         is_test=body.test,
         consent=body.consent.model_dump(mode="json") if body.consent else None,
+        redirect_url=body.redirect_url, created_at=utcnow(),
     )
+    link = issue_link(v, request)
     db.add(v)
     audit(db, f"client:{client.id}", "verification.created", v.id,
           f"consent {body.consent.version}" if body.consent else "no consent recorded")
     db.flush()
-    return verification_out(v, service.required_media(v))
+    return {**verification_out(v, service.required_media(v)), **link}
+
+
+@router.post("/{vid}/link")
+def new_link(vid: str, request: Request, client: ApiClient = Depends(require_client), db: Session = Depends(get_db)):
+    """A fresh hosted link for a verification that is still open (the old link stops working)."""
+    v = _get(db, client, vid)
+    _open(v)
+    link = issue_link(v, request)
+    audit(db, f"client:{client.id}", "verification.link_issued", v.id)
+    return link
 
 
 @router.get("")
@@ -83,6 +106,10 @@ async def upload(vid: str, kind: str, file: UploadFile = File(...),
                  client: ApiClient = Depends(require_client), db: Session = Depends(get_db)):
     v = _get(db, client, vid)
     _open(v)
+    return await store_media(db, v, kind, file)
+
+
+async def store_media(db: Session, v: Verification, kind: str, file: UploadFile) -> dict:
     if kind not in service.allowed_media(v) or not re.fullmatch(r"[a-z_0-9]+", kind):
         raise HTTPException(422, f"kind must be one of {service.allowed_media(v)}")
     limit = get_settings().max_upload_mb * 1024 * 1024
@@ -101,7 +128,8 @@ async def upload(vid: str, kind: str, file: UploadFile = File(...),
     v.media.append(Media(id=mid, kind=kind, path=storage.save(v.id, mid, data), sha256=crypto.sha256_hex(data),
                            phash=integrity.phash(data)))
     db.flush()
-    return {"kind": kind, "quality": images.quality(img), "uploaded_media": sorted(m.kind for m in v.media)}
+    return {"kind": kind, "media_id": mid, "quality": images.quality(img),
+            "uploaded_media": sorted(m.kind for m in v.media)}
 
 
 @router.post("/{vid}/submit", status_code=202)
@@ -109,13 +137,17 @@ def submit(vid: str, background: BackgroundTasks, client: ApiClient = Depends(re
            db: Session = Depends(get_db)):
     v = _get(db, client, vid)
     _open(v)
+    return start_processing(db, v, f"client:{client.id}", background)
+
+
+def start_processing(db: Session, v: Verification, actor: str, background: BackgroundTasks) -> dict:
     have = {m.kind for m in v.media}
     missing = [k for k in service.required_media(v) if k not in have]
     if missing:
         raise HTTPException(422, {"message": "missing required media", "missing": missing})
     v.status = "processing"
     v.submitted_at = utcnow()
-    audit(db, f"client:{client.id}", "verification.submitted", v.id)
+    audit(db, actor, "verification.submitted", v.id)
     db.commit()
     background.add_task(service.process, v.id)
     return verification_out(v, service.required_media(v))

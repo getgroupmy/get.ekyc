@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import re
 from datetime import date
 from datetime import datetime as datetime_
 from typing import Literal
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from .db import Verification
 from .reasons import describe
@@ -38,6 +39,23 @@ class CreateVerification(BaseModel):
     require_liveness: bool | None = None
     test: bool = Field(default=False, description="A test run: never used for duplicates, deleted after 48 h")
     consent: Consent | None = None
+    redirect_url: str | None = Field(
+        default=None, max_length=500,
+        description="Hosted flow: where get.ekyc sends the user back when they finish or cancel. "
+                    "https://… or your app's own link scheme (e.g. getride://ekyc-done).")
+
+    @field_validator("redirect_url")
+    @classmethod
+    def _safe_redirect(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        m = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]{1,30})://[^\s]+$", v)
+        scheme = m.group(1).lower() if m else ""
+        local = re.match(r"^http://(localhost|127\.0\.0\.1)(:\d+)?(/|$)", v)
+        if not m or scheme in {"javascript", "data", "file", "vbscript", "ftp", "blob"} or (scheme == "http" and not local):
+            raise ValueError("redirect_url must be https://… or an app link such as getride://ekyc-done")
+        return v
 
 
 class CreateClient(BaseModel):

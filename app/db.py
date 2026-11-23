@@ -81,6 +81,8 @@ class Verification(Base):
     media_purged: Mapped[bool] = mapped_column(Boolean, default=False)
     is_test: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     consent: Mapped[dict | None] = mapped_column(JSON)  # {"version", "accepted_at", "text_sha256"} as the app sent it
+    hosted_token_hash: Mapped[str | None] = mapped_column(String(64), index=True)  # the hosted link's secret, hashed
+    redirect_url: Mapped[str | None] = mapped_column(String(500))  # where the hosted page sends the user back
 
     client: Mapped[ApiClient] = relationship()
     media: Mapped[list["Media"]] = relationship(back_populates="verification", cascade="all, delete-orphan")
@@ -196,6 +198,11 @@ def _migrate(engine) -> None:  # noqa: ANN001
         if "row_hash" not in audit_cols:
             conn.execute(text("ALTER TABLE audit_log ADD COLUMN prev_hash VARCHAR(64)"))
             conn.execute(text("ALTER TABLE audit_log ADD COLUMN row_hash VARCHAR(64)"))
+        if "hosted_token_hash" not in cols:
+            conn.execute(text("ALTER TABLE verifications ADD COLUMN hosted_token_hash VARCHAR(64)"))
+            conn.execute(text("ALTER TABLE verifications ADD COLUMN redirect_url VARCHAR(500)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_verifications_hosted_token_hash "
+                              "ON verifications (hosted_token_hash)"))
         if "is_test" not in cols:
             conn.execute(text("ALTER TABLE verifications ADD COLUMN is_test BOOLEAN NOT NULL DEFAULT 0"))
             # Runs made from the console before tests were marked

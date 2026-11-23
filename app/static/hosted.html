@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>Identity check</title>
+<style>
+  :root { --bg:#f5f7fa; --card:#fff; --ink:#15202b; --mute:#5b6b7a; --line:#dde3ea; --brand:#0b6bcb; --ok:#127a3e; --bad:#b42318; --warn:#9a6200; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f141a; --card:#171e26; --ink:#e6edf3; --mute:#9aa8b6; --line:#2a3440; --brand:#4da3ff; --ok:#4cc38a; --bad:#ff7b72; --warn:#e3b341; } }
+  * { box-sizing:border-box; }
+  html, body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width:480px; margin:0 auto; padding:16px 16px calc(24px + env(safe-area-inset-bottom)); min-height:100vh; display:flex; flex-direction:column; }
+  header { display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+  header b { flex:1; font-size:15px; }
+  .lang button { border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:999px; padding:4px 10px; font-size:13px; cursor:pointer; }
+  .lang button.on { background:var(--brand); color:#fff; border-color:var(--brand); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; flex:1; display:flex; flex-direction:column; gap:12px; }
+  h1 { font-size:21px; margin:0; line-height:1.3; }
+  p { margin:0; }
+  .mute { color:var(--mute); font-size:14px; }
+  .steps { display:flex; gap:6px; margin-bottom:12px; }
+  .steps i { flex:1; height:4px; border-radius:2px; background:var(--line); }
+  .steps i.on { background:var(--brand); }
+  .btn { display:block; width:100%; border:0; border-radius:12px; padding:14px; font-size:16px; font-weight:600; cursor:pointer; background:var(--brand); color:#fff; text-align:center; }
+  .btn.alt { background:transparent; color:var(--brand); border:1px solid var(--line); }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .spacer { flex:1; }
+  .frame { position:relative; width:100%; aspect-ratio:3/4; background:#000; border-radius:14px; overflow:hidden; }
+  .frame video, .frame img { width:100%; height:100%; object-fit:cover; display:block; }
+  .frame video { transform:scaleX(-1); }
+  .oval { position:absolute; inset:12% 18% 18%; border:3px solid rgba(255,255,255,.85); border-radius:50%; box-shadow:0 0 0 999px rgba(0,0,0,.35); }
+  .cue { position:absolute; left:0; right:0; bottom:10px; text-align:center; color:#fff; font-weight:700; font-size:20px; text-shadow:0 1px 3px #000; }
+  .count { position:absolute; top:10px; right:14px; color:#fff; font-size:34px; font-weight:800; text-shadow:0 1px 3px #000; }
+  .doc { aspect-ratio:1.586; border:2px dashed var(--line); border-radius:12px; display:grid; place-items:center; overflow:hidden; background:var(--bg); }
+  .doc img { width:100%; height:100%; object-fit:contain; }
+  .note { border-radius:10px; padding:10px 12px; font-size:14px; background:var(--bg); }
+  .note.ok { color:var(--ok); } .note.bad { color:var(--bad); } .note.warn { color:var(--warn); }
+  ul.tips { margin:0; padding-left:20px; color:var(--mute); font-size:14px; }
+  .consent { font-size:14px; color:var(--mute); max-height:40vh; overflow:auto; border:1px solid var(--line); border-radius:10px; padding:12px; }
+  label.check { display:flex; gap:10px; align-items:flex-start; font-size:15px; }
+  label.check input { width:22px; height:22px; margin-top:1px; }
+  .big { font-size:56px; text-align:center; line-height:1; }
+  .spin { width:42px; height:42px; border:4px solid var(--line); border-top-color:var(--brand); border-radius:50%; animation:s 0.9s linear infinite; margin:10px auto; }
+  @keyframes s { to { transform:rotate(360deg); } }
+  input[type=file] { display:none; }
+  footer { text-align:center; margin-top:12px; font-size:12px; color:var(--mute); }
+</style>
+</head>
+<body>
+<main>
+  <header><b id="who"></b><span class="lang"><button data-l="en">EN</button> <button data-l="ms">BM</button></span></header>
+  <div class="steps" id="steps"></div>
+  <div class="card" id="view"><div class="spin"></div></div>
+  <footer>Secured by GET eKYC · <span id="foot"></span></footer>
+</main>
+<input type="file" id="camDoc" accept="image/*" capture="environment">
+<input type="file" id="pickDoc" accept="image/*">
+<input type="file" id="camSelf" accept="image/*" capture="user">
+<script>
+"use strict";
+const T = {
+  en: {
+    loading: "Loading…", invalid: "This link is not valid", invalidMsg: "Go back to the app and start the check again.",
+    expired: "This link has expired", expiredMsg: "Go back to the app and start again.",
+    done: "All done", doneMsg: "Thank you. Your identity check has been sent.", review: "Thank you. A member of our team will look at your check shortly.",
+    checking: "Checking your details…", checkingMsg: "This usually takes under a minute. Please keep this page open.",
+    stillChecking: "Still checking. You can go back to the app; it will tell you the result.",
+    back: "Back to the app", close: "You can close this page now.", cancel: "Cancel",
+    welcome: "Confirm your identity", welcomeMsg: "{c} needs to confirm who you are. It takes about 2 minutes.",
+    need: "You will need", needDoc: "Your MyKad, passport or other ID", needFace: "Your face, in good light",
+    agree: "I agree to this", start: "Start",
+    front: "Photograph the front", frontMsg: "Place the document on a dark, flat surface and fill the frame. No glare, no fingers over the text.",
+    backSide: "Now the back", backMsg: "Turn the card over and take a photo of the back.",
+    takePhoto: "Take photo", gallery: "Choose from gallery", retake: "Retake", useIt: "Use this photo",
+    uploading: "Uploading…", reading: "Reading the document…",
+    seen: "We see: {d}", unclear: "We couldn't read this clearly. Retake in better light, or continue anyway.",
+    selfie: "Now your face", selfieMsg: "We'll take a selfie and ask you to turn your head. Remove glasses and hats; find good light.",
+    openCam: "Open camera", camFail: "The camera did not open. Allow camera access, or use the buttons below to take each photo.",
+    center: "Look straight at the camera", left: "Turn your head to the left", right: "Turn your head to the right",
+    hold: "Hold still…", selfieCue: "Look straight at the camera",
+    photoOf: "Photo {n} of {m}: {cue}", send: "Send", sending: "Sending…", error: "Something went wrong: {e}", tryAgain: "Try again",
+    test: "TEST", left_short: "left", right_short: "right",
+  },
+  ms: {
+    loading: "Memuatkan…", invalid: "Pautan ini tidak sah", invalidMsg: "Kembali ke aplikasi dan mulakan semakan semula.",
+    expired: "Pautan ini telah tamat tempoh", expiredMsg: "Kembali ke aplikasi dan mulakan semula.",
+    done: "Selesai", doneMsg: "Terima kasih. Semakan identiti anda telah dihantar.", review: "Terima kasih. Pasukan kami akan menyemak permohonan anda sebentar lagi.",
+    checking: "Menyemak butiran anda…", checkingMsg: "Biasanya kurang dari satu minit. Sila kekalkan halaman ini.",
+    stillChecking: "Masih menyemak. Anda boleh kembali ke aplikasi; keputusan akan dimaklumkan di sana.",
+    back: "Kembali ke aplikasi", close: "Anda boleh tutup halaman ini sekarang.", cancel: "Batal",
+    welcome: "Sahkan identiti anda", welcomeMsg: "{c} perlu mengesahkan identiti anda. Ia mengambil masa kira-kira 2 minit.",
+    need: "Anda perlukan", needDoc: "MyKad, pasport atau dokumen pengenalan lain", needFace: "Wajah anda, di tempat yang terang",
+    agree: "Saya bersetuju", start: "Mula",
+    front: "Ambil gambar bahagian depan", frontMsg: "Letakkan dokumen di atas permukaan rata yang gelap dan penuhkan bingkai. Elakkan silau dan jari menutup tulisan.",
+    backSide: "Sekarang bahagian belakang", backMsg: "Terbalikkan kad dan ambil gambar bahagian belakang.",
+    takePhoto: "Ambil gambar", gallery: "Pilih dari galeri", retake: "Ambil semula", useIt: "Guna gambar ini",
+    uploading: "Memuat naik…", reading: "Membaca dokumen…",
+    seen: "Dikesan: {d}", unclear: "Kami tidak dapat membaca dengan jelas. Ambil semula di tempat lebih terang, atau teruskan.",
+    selfie: "Sekarang wajah anda", selfieMsg: "Kami akan ambil swafoto dan minta anda memusingkan kepala. Tanggalkan cermin mata dan topi; cari tempat terang.",
+    openCam: "Buka kamera", camFail: "Kamera tidak dapat dibuka. Benarkan akses kamera, atau guna butang di bawah untuk setiap gambar.",
+    center: "Pandang tepat ke kamera", left: "Pusingkan kepala ke kiri", right: "Pusingkan kepala ke kanan",
+    hold: "Jangan bergerak…", selfieCue: "Pandang tepat ke kamera",
+    photoOf: "Gambar {n} daripada {m}: {cue}", send: "Hantar", sending: "Menghantar…", error: "Ralat: {e}", tryAgain: "Cuba lagi",
+    test: "UJIAN", left_short: "kiri", right_short: "kanan",
+  },
+};
+const $ = id => document.getElementById(id);
+const h = (tag, attrs = {}, ...kids) => {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) k === "class" ? e.className = v : k.startsWith("on") ? e.addEventListener(k.slice(2), v) : e.setAttribute(k, v);
+  for (const k of kids.flat()) if (k !== null && k !== undefined && k !== false) e.append(k instanceof Node ? k : document.createTextNode(k));
+  return e;
+};
+const token = decodeURIComponent(location.pathname.split("/v/")[1] || "").replace(/\/.*$/, "");
+const base = "/v1/hosted/" + encodeURIComponent(token);
+let lang = (() => { try { return localStorage.getItem("ekyc_lang") || ""; } catch { return ""; } })() || ((navigator.language || "").toLowerCase().startsWith("ms") ? "ms" : "en");
+let S = null, doc = null, render = () => {};
+const t = (k, vars = {}) => (T[lang][k] || T.en[k] || k).replace(/\{(\w+)\}/g, (_, v) => vars[v] ?? "");
+function setLang(l) {
+  lang = l; try { localStorage.setItem("ekyc_lang", l); } catch {}
+  document.documentElement.lang = l === "ms" ? "ms" : "en";
+  for (const b of document.querySelectorAll(".lang button")) b.classList.toggle("on", b.dataset.l === l);
+  render();
+}
+document.querySelector(".lang").addEventListener("click", e => e.target.dataset.l && setLang(e.target.dataset.l));
+
+async function call(path, opts = {}) {
+  const r = await fetch(base + path, { cache: "no-store", ...opts });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) { const d = body.detail; const err = new Error(typeof d === "string" ? d : d?.message || r.statusText); err.status = r.status; throw err; }
+  return body;
+}
+function show(...kids) { $("view").replaceChildren(...kids); window.scrollTo(0, 0); }
+function progress(n) { $("steps").replaceChildren(...[1, 2, 3, 4].map(i => h("i", { class: i <= n ? "on" : "" }))); }
+const leave = url => { if (url) location.replace(url); };
+const cancelBtn = () => S?.cancel_url ? h("button", { class: "btn alt", onclick: () => leave(S.cancel_url) }, t("cancel")) : null;
+
+// Shrink a camera photo (often 12 MP) before upload: faster, and plenty for reading.
+function shrink(blob, max = 2000) {
+  return new Promise((res, rej) => {
+    const img = new Image(), url = URL.createObjectURL(blob);
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      c.toBlob(b => b ? res(b) : rej(new Error("image")), "image/jpeg", 0.92);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("not an image")); };
+    img.src = url;
+  });
+}
+async function put(kind, blob) {
+  const fd = new FormData(); fd.append("file", blob, kind + ".jpg");
+  return call("/media/" + kind, { method: "PUT", body: fd });
+}
+function pick(input) {
+  return new Promise(res => { input.value = ""; input.onchange = () => res(input.files[0] || null); input.click(); });
+}
+
+// --- screens -------------------------------------------------------------------------
+function message(title, msg, url, icon) {
+  progress(4);
+  render = () => show(h("div", { class: "big" }, icon || ""), h("h1", {}, t(title)), h("p", { class: "mute" }, t(msg)),
+    h("div", { class: "spacer" }),
+    url ? h("button", { class: "btn", onclick: () => leave(url) }, t("back")) : h("p", { class: "mute" }, t("close")));
+  render();
+}
+function welcome() {
+  progress(1);
+  let agreed = !S.consent_needed;
+  render = () => {
+    const go = h("button", { class: "btn", onclick: start }, t("start"));
+    go.disabled = !agreed;
+    show(h("h1", {}, t("welcome")), h("p", {}, t("welcomeMsg", { c: S.client || "This app" })),
+      h("p", { class: "mute" }, t("need")), h("ul", { class: "tips" }, h("li", {}, S.document_name || t("needDoc")),
+        S.needs_selfie === false ? null : h("li", {}, t("needFace"))),
+      S.consent_needed ? h("div", { class: "consent" }, S.consent_text[lang] || S.consent_text.en) : null,
+      S.consent_needed ? h("label", { class: "check" }, h("input", { type: "checkbox", ...(agreed ? { checked: "" } : {}),
+        onchange: e => { agreed = e.target.checked; go.disabled = !agreed; } }), t("agree")) : null,
+      h("div", { class: "spacer" }), go, cancelBtn());
+  };
+  render();
+  async function start() {
+    try {
+      if (S.consent_needed) await call("/consent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accepted: true, lang }) });
+      S.consent_needed = false;
+      side("document_front");
+    } catch (e) { fail(e, welcome); }
+  }
+}
+function side(kind) {
+  progress(2);
+  let shot = null, note = null, busy = false;
+  render = () => {
+    const front = kind === "document_front";
+    const box = h("div", { class: "doc" }, shot ? h("img", { src: shot.url, alt: "" }) : h("span", { class: "mute" }, "🪪"));
+    const kids = [h("h1", {}, t(front ? "front" : "backSide")), h("p", { class: "mute" }, t(front ? "frontMsg" : "backMsg")), box];
+    if (note) kids.push(h("div", { class: "note " + note.cls }, note.text));
+    kids.push(h("div", { class: "spacer" }));
+    if (busy) kids.push(h("div", { class: "spin" }), h("p", { class: "mute", style: "text-align:center" }, t(busy)));
+    else if (!shot) kids.push(h("button", { class: "btn", onclick: () => take(pick($("camDoc"))) }, t("takePhoto")),
+      h("button", { class: "btn alt", onclick: () => take(pick($("pickDoc"))) }, t("gallery")));
+    else kids.push(h("button", { class: "btn", onclick: next }, t("useIt")),
+      h("button", { class: "btn alt", onclick: () => { shot = null; note = null; render(); } }, t("retake")));
+    show(...kids);
+  };
+  render();
+  async function take(p) {
+    const file = await p; if (!file) return;
+    try {
+      busy = "uploading"; render();
+      const blob = await shrink(file);
+      shot = { url: URL.createObjectURL(blob) };
+      if (kind === "document_front") busy = "reading", render();
+      const out = await put(kind, blob);
+      busy = false;
+      if (out.document) {
+        doc = out.document;
+        note = doc.readable === false ? { cls: "warn", text: t("unclear") } : doc.name ? { cls: "ok", text: "✓ " + t("seen", { d: doc.name }) } : null;
+      }
+      render();
+    } catch (e) { busy = false; shot = null; note = { cls: "bad", text: t("error", { e: e.message }) }; render(); }
+  }
+  function next() {
+    if (kind === "document_front" && (doc?.needs_back)) return side("document_back");
+    const person = doc ? doc.needs_selfie !== false : S.needs_selfie !== false;
+    person ? face() : submit();
+  }
+}
+function face() {
+  progress(3);
+  const cues = ["selfie", ...(S.liveness_challenge || [])];
+  render = () => show(h("h1", {}, t("selfie")), h("p", { class: "mute" }, t("selfieMsg")),
+    h("ul", { class: "tips" }, ...[...new Set(cues.map(c => t(c === "selfie" ? "selfieCue" : c)))].map(x => h("li", {}, x))),
+    h("div", { class: "spacer" }), h("button", { class: "btn", onclick: live }, t("openCam")));
+  render();
+
+  async function live() {
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 960 } }, audio: false }); }
+    catch { return manual(); }
+    const video = h("video", { autoplay: "", playsinline: "", muted: "" }); video.muted = true; video.srcObject = stream;
+    const cue = h("div", { class: "cue" }), count = h("div", { class: "count" });
+    render = () => {};
+    show(h("div", { class: "frame" }, video, h("div", { class: "oval" }), cue, count));
+    await video.play().catch(() => {});
+    await new Promise(r => setTimeout(r, 600));
+    const shots = [];
+    try {
+      for (const c of cues) {
+        cue.textContent = t(c === "selfie" ? "selfieCue" : c);
+        for (let n = 3; n > 0; n--) { count.textContent = n; await new Promise(r => setTimeout(r, 900)); }
+        count.textContent = "📸";
+        shots.push(await frame(video));
+        await new Promise(r => setTimeout(r, 300));
+      }
+    } finally { stream.getTracks().forEach(tr => tr.stop()); }
+    upload(cues, shots);
+  }
+  function frame(video) {
+    const c = document.createElement("canvas");
+    c.width = video.videoWidth; c.height = video.videoHeight;
+    c.getContext("2d").drawImage(video, 0, 0);  // the real image, not the mirrored preview
+    return new Promise(r => c.toBlob(r, "image/jpeg", 0.92));
+  }
+  // No live camera (permissions, old webview): one photo per cue from the camera app.
+  function manual() {
+    const shots = [];
+    const step = () => {
+      const i = shots.length, c = cues[i];
+      render = () => show(h("h1", {}, t("photoOf", { n: i + 1, m: cues.length, cue: t(c === "selfie" ? "selfieCue" : c) })),
+        h("div", { class: "note warn" }, t("camFail")), h("div", { class: "spacer" }),
+        h("button", { class: "btn", onclick: async () => {
+          const f = await pick($("camSelf")); if (!f) return;
+          shots.push(await shrink(f, 1280));
+          shots.length < cues.length ? step() : upload(cues, shots);
+        } }, t("takePhoto")));
+      render();
+    };
+    step();
+  }
+  async function upload(cues, shots) {
+    render = () => show(h("div", { class: "spin" }), h("p", { class: "mute", style: "text-align:center" }, t("uploading")));
+    render();
+    try {
+      for (let i = 0; i < cues.length; i++) await put(cues[i] === "selfie" ? "selfie" : "liveness_" + i, shots[i]);
+      submit();
+    } catch (e) { fail(e, face); }
+  }
+}
+async function submit() {
+  progress(4);
+  render = () => show(h("div", { class: "spin" }), h("h1", { style: "text-align:center" }, t("checking")), h("p", { class: "mute", style: "text-align:center" }, t("checkingMsg")));
+  render();
+  try { await call("/submit", { method: "POST" }); }
+  catch (e) { if (e.status !== 409) return fail(e, () => side("document_front")); }
+  const until = Date.now() + 60000;
+  while (Date.now() < until) {
+    await new Promise(r => setTimeout(r, 2000));
+    const st = await call("/status").catch(() => null);
+    if (st?.finished) return finish(st);
+  }
+  const st = await call("/status").catch(() => ({}));
+  message("done", "stillChecking", st.return_url, "⏳");
+  if (st.return_url) setTimeout(() => leave(st.return_url), 4000);
+}
+function finish(st) {
+  message("done", st.state === "review" ? "review" : "doneMsg", st.return_url, "✅");
+  if (st.return_url) setTimeout(() => leave(st.return_url), 2500);
+}
+function fail(e, retry) {
+  render = () => show(h("h1", {}, "⚠️"), h("div", { class: "note bad" }, t("error", { e: e.message })), h("div", { class: "spacer" }),
+    h("button", { class: "btn", onclick: retry }, t("tryAgain")), cancelBtn());
+  render();
+}
+
+// --- start -----------------------------------------------------------------------------
+setLang(lang);
+(async () => {
+  try { S = await call(""); }
+  catch (e) { return message("invalid", "invalidMsg", null, "🔗"); }
+  $("who").textContent = S.client || "";
+  $("foot").textContent = S.test ? t("test") : "";
+  if (S.state === "expired") return message("expired", "expiredMsg", S.return_url, "⌛");
+  if (S.state !== "created") return finish({ state: S.state, return_url: S.return_url });
+  welcome();
+})();
+</script>
+</body>
+</html>

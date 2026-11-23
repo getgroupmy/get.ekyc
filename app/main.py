@@ -13,7 +13,7 @@ from . import service
 from .config import get_settings
 from .db import get_db, init_db
 from .pipeline import face, liveness, ocr
-from .routers import admin, compat, session, verifications
+from .routers import admin, compat, hosted, session, verifications
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("ekyc")
@@ -60,6 +60,7 @@ app.include_router(verifications.router)
 app.include_router(admin.router)
 app.include_router(compat.router)
 app.include_router(session.router)
+app.include_router(hosted.router)
 
 
 @app.get("/health", tags=["system"])
@@ -78,6 +79,20 @@ def health(request: Request, db=Depends(get_db)):  # noqa: ANN001
 @app.get("/", include_in_schema=False)
 def root():
     return RedirectResponse("/admin")
+
+
+@app.get("/v/{token}", include_in_schema=False)
+def hosted_page(token: str):  # noqa: ARG001 - the page reads the token from its own address
+    """The hosted verification page a user is sent to."""
+    return FileResponse(STATIC / "hosted.html", headers={
+        "Cache-Control": "no-store",
+        "Referrer-Policy": "no-referrer",  # the link is a credential: never leak it to another site
+        "X-Robots-Tag": "noindex",
+        "Permissions-Policy": "camera=(self)",
+        "Content-Security-Policy": "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; "
+                                   "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+                                   "connect-src 'self'; frame-ancestors *",
+    })
 
 
 @app.get("/guide", include_in_schema=False)

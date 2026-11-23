@@ -55,7 +55,7 @@
 <header><b>GET eKYC</b><span class="mute">Integration guide</span><span style="flex:1"></span><span class="mute" id="baseShow"></span></header>
 <div class="wrap">
 <nav>
-  <a href="#overview">Overview</a><a href="#key">1 · Get an API key</a><a href="#create">2 · Create a verification</a>
+  <a href="#overview">Overview</a><a href="#hosted">Hosted page (recommended)</a><a href="#key">1 · Get an API key</a><a href="#create">2 · Create a verification</a>
   <a href="#upload">3 · Upload the photos</a><a href="#submit">4 · Submit</a><a href="#result">5 · Get the result</a>
   <a href="#webhooks">Webhooks</a><a href="#types">Document types</a><a href="#liveness">Liveness capture</a>
   <a href="#fields">What comes back</a><a href="#reasons">Reason codes</a><a href="#more">Other calls</a>
@@ -73,6 +73,41 @@
   <div class="note"><b>One rule:</b> call the API <b>from your server</b>, never from the mobile app or browser. The API key
   must stay secret: your app sends the photos to your server, and your server forwards them.</div>
   <p class="mute">Base URL for every call below: <code id="baseInline"></code></p>
+</section>
+
+<section id="hosted">
+  <h2>Hosted page: the recommended way</h2>
+  <p>Like other eKYC providers, GET eKYC can run the whole capture itself. Your app does not build camera screens:
+  it hands the user over to GET eKYC's page and gets them back when they are done. New checks, documents and capture
+  improvements then reach your users without an app update.</p>
+  <div class="flow"><span>Your server: create (with <code>redirect_url</code>)</span><i>→</i><span>Open <code>hosted_url</code></span><i>→</i>
+    <span>User: consent · document · selfie · head turns</span><i>→</i><span>Back to <code>redirect_url</code></span><i>→</i><span>Webhook with the result</span></div>
+  <ol class="steps">
+    <li><b>Your server creates the verification</b> (step 2 below) and adds <code>"redirect_url"</code>: where to send the user afterwards. An <code>https://</code> page or your app's own link, such as <code>getride://ekyc-done</code>. The answer has <code>hosted_url</code>, valid for <span class="ttl"></span> minutes and for this one verification only.</li>
+    <li><b>Send the user to <code>hosted_url</code>.</b> On mobile, open it in the system browser view (iOS <code>ASWebAuthenticationSession</code> / <code>SFSafariViewController</code>, Android Custom Tabs; in Flutter <code>flutter_web_auth_2</code> or <code>url_launcher</code> with <code>LaunchMode.inAppBrowserView</code>). These have camera access and return to your app link. In a plain WebView you must grant the camera permission yourself.</li>
+    <li><b>The page does the rest:</b> notice and consent (English / Bahasa Melayu), document photos with instant "we can't read this" feedback, the back of a MyKad when needed, selfie and the head-turn liveness. Vehicle documents skip the face steps by themselves.</li>
+    <li><b>The user comes back</b> to <code>redirect_url?verification_id=ver_…&amp;status=…&amp;external_ref=…</code>. <code>status</code> is <code>approved</code>, <code>review</code>, <code>rejected</code>, <code>submitted</code> (still checking), <code>cancelled</code> or <code>expired</code>. Use it only to choose the next screen.</li>
+    <li><b>Trust only your server:</b> the decision comes from the signed webhook (or <code>GET /v1/verifications/{id}</code> with your key). The return link can be typed by anyone, so never approve a user from it.</li>
+  </ol>
+  <div class="tabs" data-group="hosted"></div>
+  <pre class="lang" data-group="hosted" data-lang="curl"><code>curl -s -X POST BASE/v1/verifications \
+  -H "X-API-Key: $EKYC_KEY" -H "Content-Type: application/json" \
+  -d '{ "external_ref": "driver-1042", "redirect_url": "getride://ekyc-done" }'
+# → { "id": "ver_6f…", "hosted_url": "BASE/v/AbC…", "hosted_url_expires_at": "…", … }</code></pre>
+  <pre class="lang" data-group="hosted" data-lang="deno"><code>// Supabase Edge Function: start a hosted check for the signed-in driver
+const r = await fetch(`${Deno.env.get("EKYC_URL")}/v1/verifications`, {
+  method: "POST",
+  headers: { "X-API-Key": Deno.env.get("EKYC_KEY")!, "Content-Type": "application/json" },
+  body: JSON.stringify({ external_ref: user.id, redirect_url: "getride://ekyc-done" }),
+});
+const v = await r.json();
+// save v.id against the user, then give the app only the link:
+return Response.json({ url: v.hosted_url });</code></pre>
+  <pre class="lang" data-group="hosted" data-lang="dart"><code>// Flutter (flutter_web_auth_2): open the page, wait for getride://ekyc-done
+final res = await FlutterWebAuth2.authenticate(url: hostedUrl, callbackUrlScheme: "getride");
+final status = Uri.parse(res).queryParameters["status"]; // a hint for the screen only
+// then refresh the driver's state from YOUR server (which got the webhook)</code></pre>
+  <p class="mute">Link lost or expired before the user finished? <code>POST /v1/verifications/{id}/link</code> gives a fresh one (the old one stops working). Already collected consent in your app? Send <code>consent</code> when creating and the page skips its notice.</p>
 </section>
 
 <section id="key">
@@ -144,6 +179,7 @@ v = httpx.post(f"{BASE}/v1/verifications", headers=headers, json={
 
 <section id="upload">
   <h2>3 · Upload the photos</h2>
+  <p class="mute">Using the hosted page? Skip steps 3 and 4: the page uploads and submits for you.</p>
   <p>One <code>PUT</code> per image, as multipart form field <code>file</code> (JPEG, PNG or WebP, up to <span class="maxMb"></span> MB).
   Kinds: <code>document_front</code>, <code>document_back</code> (optional; recommended for MyKad), <code>selfie</code>,
   <code>liveness_1</code>…<code>liveness_3</code>. Each answer includes image quality, so your app can ask for a retake right away.</p>
@@ -245,7 +281,8 @@ async function verifyEkycWebhook(secret: string, ts: string, raw: string, sig: s
   <h2>What comes back</h2>
   <p><code>result.extracted</code> holds what was read from the document; <code>result.checks</code> lists every check with
   <code>status</code> (<code>pass</code> / <code>review</code> / <code>fail</code> / <code>skipped</code>) and details;
-  <code>result.scores</code> holds <code>face_match</code> (0–1) and <code>face_score</code> (0–100, 80 = match threshold).</p>
+  <code>result.scores</code> holds <code>face_match</code> (0–1) and <code>face_score</code> (0–100, 80 = match threshold);
+  <code>result.engine_version</code> is the GET eKYC version that decided it.</p>
   <table><thead><tr><th>Field</th><th>Example</th></tr></thead><tbody>
     <tr><td><code>document_type</code>, <code>document_subtype</code>, <code>country</code></td><td>national_id · MyKad · MYS</td></tr>
     <tr><td><code>id_number</code></td><td>The holder's ID number (IC / NRIC), e.g. 900514-10-5231</td></tr>
@@ -293,6 +330,7 @@ curl -s -X DELETE BASE/v1/verifications/$ID -H "X-API-Key: $EKYC_KEY"   # erases
     <li><b>Consent:</b> record the user's consent (<code>consent</code>) before taking photos — biometrics are sensitive data under the PDPA.</li>
     <li><b>Privacy:</b> images and personal data are stored encrypted; delete a user's data with <code>DELETE</code> when they ask.</li>
     <li><b>Decisions:</b> a <code>review</code> is decided by a person; plan your app for a wait.</li>
+    <li><b>Stability:</b> <code>/v1</code> only grows: new fields, document types and reason codes are added, nothing is renamed or removed. Ignore fields you do not know and act on <code>status</code>. A breaking change would come as <code>/v2</code>, with <code>/v1</code> kept running.</li>
   </ul>
 </section>
 

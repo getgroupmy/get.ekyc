@@ -22,6 +22,17 @@ FINAL = ("approved", "rejected", "review")
 _process_lock = threading.Lock()  # one verification at a time: small boxes, big models
 
 
+_version_cache: list = []
+
+
+def _engine_version() -> str | None:
+    """The get.ekyc commit that made this decision (see the console's Changelog)."""
+    if not _version_cache:
+        from . import system
+        _version_cache.append(system.version().get("commit"))
+    return _version_cache[0]
+
+
 def required_media(v: Verification) -> list[str]:
     from .pipeline.catalog import TYPES
     meta = TYPES.get(v.document_type)
@@ -216,7 +227,8 @@ def _process(verification_id: str) -> None:
                     status = "review"
                 if scr["status"] == REVIEW:
                     reasons.append(scr["code"])
-            v.result = {"checks": outcome.checks + extra, "extracted": outcome.extracted, "scores": outcome.scores}
+            v.result = {"checks": outcome.checks + extra, "extracted": outcome.extracted, "scores": outcome.scores,
+                        "engine_version": _engine_version()}
             v.doc_number_hash = doc_hash
             if outcome.selfie_embedding is not None:
                 v.face_embedding = outcome.selfie_embedding.astype(np.float32).tobytes()

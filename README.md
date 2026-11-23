@@ -127,6 +127,18 @@ result on the check from the signed webhook. That is get-ride work, not done yet
 
 ## Integrating (get-ride or any app)
 
+**Hosted page (recommended, like other eKYC providers).** Your server creates a
+verification with a `redirect_url`; the answer includes a one-time `hosted_url`.
+Send the user there: get.ekyc's own page takes consent (English / Bahasa
+Melayu), the document photos, the selfie and the head turns, then sends the user
+back to `redirect_url?verification_id=…&status=…`. The decision itself reaches
+your server by the signed webhook (never trust the return link). Your app needs
+no camera screens, and capture improvements reach users without an app update.
+Set `EKYC_PUBLIC_URL` so links use the public address. Full walk-through:
+`/guide#hosted`.
+
+**Or your own screens**, with the API calls below.
+
 A step-by-step guide for app owners, with code in curl, Node/Deno, Python and Flutter, is served at
 **`/guide`** (e.g. `https://ekyc.getride.my/guide`). Document types, reason codes and limits on it come
 live from the running server. The summary below is the same flow.
