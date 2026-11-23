@@ -39,9 +39,8 @@ fi
 echo "Asking for your Mac password to install the startup services…"
 sudo -v
 
-# Anything started by hand would hold port 8080 / run a second tunnel.
+# A server started by hand would hold port 8080.
 pkill -f "uvicorn app.main" 2>/dev/null || true
-pkill -f "cloudflared tunnel run" 2>/dev/null || true
 sleep 1
 
 install_plist() {  # $1 label, $2 plist body
@@ -78,7 +77,9 @@ echo "✓ get.ekyc server installed as a startup service ($APP)"
 
 if [ -f "$DIR/com.cloudflare.cloudflared.plist" ]; then
   echo "• Tunnel: already a service (installed with 'cloudflared service install'); left as it is."
-elif [ -f "$TOKEN" ] && command -v "$BREW/bin/cloudflared" >/dev/null; then
+elif [ -f "$TOKEN" ] && [ -x "$BREW/bin/cloudflared" ]; then
+  # Only now replace a tunnel started by hand (the service takes over).
+  pkill -f "cloudflared tunnel run" 2>/dev/null || true
   # The token stays in its file (mode 600); it is never written into the plist.
   install_plist "$TUN" "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
@@ -101,7 +102,9 @@ elif [ -f "$TOKEN" ] && command -v "$BREW/bin/cloudflared" >/dev/null; then
 </dict></plist>"
   echo "✓ Cloudflare tunnel installed as a startup service ($TUN)"
 else
-  echo "• Tunnel: not installed (no $TOKEN or no cloudflared). Save the token there and run this again."
+  [ -x "$BREW/bin/cloudflared" ] || echo "• Tunnel: cloudflared is not installed (brew install cloudflared)."
+  [ -f "$TOKEN" ] || echo "• Tunnel: no token file at $TOKEN. Save the tunnel token there and run this again."
+  echo "  A tunnel you started by hand was left running."
 fi
 
 # A server should come back after a power cut and not go to sleep.
