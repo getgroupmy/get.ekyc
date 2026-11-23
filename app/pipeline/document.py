@@ -28,6 +28,7 @@ class DocumentResult:
     document_number: str | None = None
     candidates: list[str] = field(default_factory=list)  # other numbers OCR read, most likely first
     name_readings: list[str] = field(default_factory=list)  # every name OCR read on the card
+    portrait_px: int | None = None  # size of the face on the document
 
 
 def _norm_id(s: str) -> str:
@@ -213,6 +214,7 @@ def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, coun
 def _portrait_check(res: DocumentResult, front: np.ndarray, doc_face, required: bool) -> None:  # noqa: ANN001
     if doc_face is not None:
         res.face_embedding = facelib.embed(front, doc_face)
+        res.portrait_px = int(min(doc_face.box[2], doc_face.box[3]))
         res.checks.append(check("document_portrait", PASS, face_width_px=doc_face.box[2],
                                 detector_score=round(doc_face.score, 3)))
     elif required:

@@ -395,3 +395,10 @@ def sanctions_refresh():
     changed = sanctions.refresh(force=True)
     hits = service.rescreen_all() if changed else 0
     return {**sanctions.status(), "changed": changed, "rescreen_hits": hits}
+
+
+@router.get("/learning")
+def learning_report(db: Session = Depends(get_db)):
+    """What reviewers' decisions say about the engine, with suggestions (never applied automatically)."""
+    from .. import learning
+    return learning.report(db)

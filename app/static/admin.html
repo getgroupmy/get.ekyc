@@ -89,6 +89,10 @@
       <p id="empty" class="mute hide">Nothing here.</p>
     </div>
     <div id="detail"></div>
+    <div class="card"><div class="bar"><h2 style="margin:0;flex:1">What get.ekyc learned from your reviews</h2>
+      <button class="btn" id="learnbtn">Refresh</button></div>
+      <p class="mute">Built from every case a person approved or rejected. Suggestions only: nothing changes by itself.</p>
+      <div id="learn" class="mute">—</div></div>
   </section>
 
   <section id="clients" class="hide">
@@ -172,7 +176,7 @@ function show(authed) {
 function tab(name) {
   for (const b of $("nav").children) b.classList.toggle("on", b.dataset.tab === name);
   for (const id of ["queue", "clients", "try"]) $(id).classList.toggle("hide", id !== name);
-  if (name === "queue") { loadQueue(); sanctionsLine().then(t => { if (t) $("health").textContent = $("health").textContent.split(" · sanctions")[0] + t; }); }
+  if (name === "queue") { loadQueue(); loadLearning().catch(() => {}); sanctionsLine().then(t => { if (t) $("health").textContent = $("health").textContent.split(" · sanctions")[0] + t; }); }
   if (name === "clients") loadClients();
   if (name === "try") loadTryClients();
 }
@@ -201,6 +205,16 @@ async function loadQueue() {
   $("empty").classList.toggle("hide", list.items.length > 0);
 }
 $("filter").onchange = loadQueue; $("kind").onchange = loadQueue; $("refresh").onclick = loadQueue;
+async function loadLearning() {
+  const r = await json("/learning");
+  const f = r.face_match || {};
+  $("learn").replaceChildren(
+    h("p", {}, `${r.reviewed_cases} reviewed cases · ${r.approved_by_reviewer} approved · ${r.rejected_by_reviewer} rejected`),
+    h("p", {}, `Face match: threshold ${f.current_threshold}` + (f.genuine_scored ? ` · genuine people: 1% scored below ${f.genuine_p01}, ${f.genuine_below_threshold} under the threshold` : "") + (f.impostor_max !== undefined ? ` · highest impostor ${f.impostor_max}` : "")),
+    r.reasons_on_genuine_people.length ? h("p", {}, "Checks that sent genuine people to review: " + r.reasons_on_genuine_people.map(([c, n]) => `${c} (${n})`).join(", ")) : "",
+    h("ul", {}, r.suggestions.map(t => h("li", {}, t))));
+}
+$("learnbtn").onclick = loadLearning;
 $("deltests").onclick = async () => {
   if (!confirm("Delete every test verification, with its images and data?")) return;
   const r = await json("/tests", { method: "DELETE" }); $("detail").replaceChildren(); loadQueue();

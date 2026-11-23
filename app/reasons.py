@@ -43,6 +43,8 @@ MESSAGES = {
     "selfie_is_id_photo": "The selfie looks like a copy of the photo on the ID, not a new photo. A person will check it.",
     "image_edited": "An image was saved by a photo editor. A person will check it.",
     "selfie_missing": "A selfie is needed for this document.",
+    "selfie_quality_low": "The selfie is not clear enough (too dark, blurry, small or turned). Please retake it facing the camera.",
+    "face_too_small_for_liveness": "Move closer to the camera.",
     "document_fields_missing": "Some details could not be read from the document. Retake it flat and in good light.",
     "document_type_mismatch": "The document does not look like the selected document type.",
     "inspection_failed": "The vehicle failed its inspection (GAGAL).",

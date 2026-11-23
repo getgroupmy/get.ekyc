@@ -311,29 +311,42 @@ The script judges the engine's own verdict (as if `EKYC_AUTO_APPROVE=true`), so 
 much of an admin's work it could take over, whatever the setting in production. Re-run it after
 changing a threshold. Small samples give rough signs, not rates, and the report says so.
 
-## Optional: passive anti-spoof model
+## Face engine
 
-The service can also score each selfie with the MobileNetV2 liveness model from
-[Faceplugin's open-source SDK](https://github.com/Faceplugin-ltd/Open-Source-Face-Liveness-Detection-SDK) (MIT-0).
-It is off until a converted model file exists. On any machine with Python:
+- **Detection** (YuNet): when no face is found it retries on a contrast-corrected copy (dim photos)
+  and an enlarged copy (small ID-card portraits); faces under 24 px are ignored; the best face is the
+  largest weighted by detector confidence.
+- **Matching** (SFace): each face is embedded together with its mirror image and averaged. The ID
+  portrait is compared with the selfie *and* the straight-on liveness frame; the better live sample
+  counts. Results carry `face_match` (cosine), `face_score` (0-100, the threshold shows as 80) and the
+  ID portrait size in pixels.
+- **Quality** (ISO 29794-5 style components): face size, sharpness, brightness, over-exposure, yaw,
+  roll and pitch. A poor selfie goes to review with what to fix (`selfie_quality_low`) instead of
+  becoming a false "no match".
+- **Active liveness**: random head-turn order, every frame must be the same person.
+- **Passive liveness (optional)**: MiniFASNetV2-SE anti-spoofing on the selfie and the straight-on
+  frame (photos of screens and prints). A low margin sends the case to review
+  (`EKYC_PASSIVE_LIVENESS_ACTION=reject` to reject). Enable it with:
 
 ```bash
-git clone https://github.com/Faceplugin-ltd/Open-Source-Face-Liveness-Detection-SDK sdk
+python scripts/download_models.py models --with-antispoof
 ```
 
-```bash
-pip install tensorflow tf2onnx onnx opencv-python-headless
-```
+  **Licence note:** the model's code and weights are Apache-2.0
+  ([suriAI/face-antispoof-onnx](https://github.com/suriAI/face-antispoof-onnx)), but the weights were
+  trained on CelebA-Spoof, a dataset licensed for non-commercial research. Decide on that before using
+  it commercially; a model trained on your own consented captures removes the question. In simulated
+  tests it caught re-photographed screens in 3 of 4 cases and prints in 1 of 4 — a second opinion, not a
+  certified (iBeta / ISO 30107-3) liveness check.
 
-```bash
-python scripts/convert_liveness_model.py sdk models/liveness_mnv2.onnx
-```
+## What it learns from reviewers
 
-Mount it with `- ./models/liveness_mnv2.onnx:/app/models/liveness_mnv2.onnx:ro` in `docker-compose.yml`.
-`/health` then reports `"passive_liveness": true`. A spoof score above
-`EKYC_PASSIVE_LIVENESS_THRESHOLD` sends the verification to review (or rejects it with
-`EKYC_PASSIVE_LIVENESS_ACTION=reject`). **This path has not been run yet** — the conversion script and the
-OpenCV inference need a first test, and the model's accuracy on your users is unknown, so start with `review`.
+Admin › Verifications › *What get.ekyc learned from your reviews* (`GET /admin/api/learning`): from
+every case a person approved or rejected it reports the checks that sent genuine people to review,
+how often the engine agreed with reviewers, the face-match scores of genuine people and impostors,
+and **suggested** threshold changes. Nothing is applied automatically — thresholds are changed by an
+admin (`.env`), after measuring with `scripts/evaluate.py`. It does not retrain models or change its
+own code.
 
 ## Development
 

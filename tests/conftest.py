@@ -9,7 +9,6 @@ os.environ.update({
     "EKYC_STORAGE_KEY": base64.b64encode(b"k" * 32).decode(),
     "EKYC_DATA_DIR": _tmp,
     "EKYC_MODELS_DIR": os.environ.get("EKYC_MODELS_DIR", str(Path(__file__).parent.parent / "models")),
-    "EKYC_PASSIVE_LIVENESS_MODEL": str(Path(_tmp) / "absent.onnx"),
     "EKYC_SANCTIONS_ENABLED": "false",  # no downloads in tests; test_risk turns it on with a fixture list
 })
 

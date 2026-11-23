@@ -1,6 +1,7 @@
 """Download the pinned model files (checksums verified) into a directory.
 
-    python scripts/download_models.py ./models
+    python scripts/download_models.py ./models                    # required models
+    python scripts/download_models.py ./models --with-antispoof   # + passive liveness (see licence note)
 """
 from __future__ import annotations
 
@@ -24,10 +25,22 @@ MODELS = {
 }
 
 
-def main(dest: str) -> None:
+# Passive anti-spoofing (MiniFASNetV2-SE, 128x128, suriAI/face-antispoof-onnx).
+# Code and weights are Apache-2.0, but the weights were trained on CelebA-Spoof,
+# a dataset licensed for non-commercial research. Fetched only with
+# --with-antispoof: decide on that licence question first.
+OPTIONAL = {
+    "antispoof.onnx": (
+        "https://raw.githubusercontent.com/suriAI/face-antispoof-onnx/main/models/best/98.20/best_model.onnx",
+        "af2381b88f38769222ed93379e12444e2a50814575de1c46170de570c55a42b6"),
+}
+
+
+def main(dest: str, with_antispoof: bool = False) -> None:
     out = Path(dest)
     out.mkdir(parents=True, exist_ok=True)
-    for name, (url, sha) in MODELS.items():
+    wanted = {**MODELS, **(OPTIONAL if with_antispoof else {})}
+    for name, (url, sha) in wanted.items():
         path = out / name
         if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() == sha:
             print(f"ok       {name}")
@@ -40,4 +53,5 @@ def main(dest: str) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "models")
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    main(args[0] if args else "models", with_antispoof="--with-antispoof" in sys.argv)

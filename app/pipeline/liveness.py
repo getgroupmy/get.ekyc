@@ -63,23 +63,44 @@ _net_lock = threading.Lock()
 
 
 def passive_available() -> bool:
-    return get_settings().passive_liveness_model.exists()
+    return get_settings().antispoof_model.exists()
 
 
-def passive(img: np.ndarray, face: facelib.Face) -> dict | None:
-    """Spoof score 0 (live) .. 1 (fake) from one image; None if the model is absent."""
+def _spoof_margin(img: np.ndarray, face: facelib.Face) -> float:
+    """MiniFASNetV2-SE (128x128, RGB, square crop 1.5x the face, edges
+    reflected): real logit minus spoof logit. Higher = more likely a live face."""
     global _net
-    s = get_settings()
-    if not passive_available():
-        return None
-    crop = facelib.crop_square(img, face)
-    rgb = cv2.cvtColor(cv2.resize(crop, (224, 224)), cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    x, y, w, h = face.box
+    side = int(max(w, h) * 1.5)
+    cx, cy = x + w / 2, y + h / 2
+    x0, y0 = int(cx - side / 2), int(cy - side / 2)
+    padded = cv2.copyMakeBorder(img, side, side, side, side, cv2.BORDER_REFLECT_101)
+    crop = padded[y0 + side:y0 + 2 * side, x0 + side:x0 + 2 * side]
+    rgb = cv2.cvtColor(cv2.resize(crop, (128, 128), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2RGB)
+    blob = rgb.transpose(2, 0, 1)[None].astype(np.float32) / 255.0
     with _net_lock:
         if _net is None:
-            _net = cv2.dnn.readNetFromONNX(str(s.passive_liveness_model))
-        _net.setInput(rgb[np.newaxis, ...])  # model exported with NHWC input
-        score = float(np.squeeze(_net.forward()))
-    if score <= s.passive_liveness_threshold:
-        return check("passive_liveness", PASS, spoof_score=round(score, 4))
+            _net = cv2.dnn.readNetFromONNX(str(get_settings().antispoof_model))
+        _net.setInput(blob)
+        logits = _net.forward()[0]
+    return float(logits[0] - logits[1])
+
+
+def passive(frames: list[tuple[np.ndarray, facelib.Face]]) -> dict | None:
+    """Single-image anti-spoofing on the selfie (and the straight-on liveness
+    frame): catches photos of screens and prints. The lowest margin counts. A
+    second opinion only: a low score sends the case to a person (or rejects,
+    with EKYC_PASSIVE_LIVENESS_ACTION=reject)."""
+    s = get_settings()
+    if not passive_available() or not frames:
+        return None
+    usable = [(img, f) for img, f in frames if min(f.box[2], f.box[3]) >= 64]  # the model needs >= 64 px faces
+    if not usable:
+        return check("passive_liveness", "skipped", "face_too_small_for_liveness")
+    margins = [_spoof_margin(img, f) for img, f in usable]
+    worst = min(margins)
+    detail = {"margin": round(worst, 2), "threshold": s.passive_liveness_threshold, "frames": len(margins)}
+    if worst >= s.passive_liveness_threshold:
+        return check("passive_liveness", PASS, **detail)
     status = FAIL if s.passive_liveness_action == "reject" else REVIEW
-    return check("passive_liveness", status, "possible_spoof", spoof_score=round(score, 4))
+    return check("passive_liveness", status, "possible_spoof", **detail)

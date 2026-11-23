@@ -56,26 +56,95 @@ def _load() -> None:
         _rec = cv2.FaceRecognizerSF.create(str(d / "sface.onnx"), "")
 
 
-def detect(img: np.ndarray) -> list[Face]:
-    """Faces sorted largest first."""
+MIN_FACE_PX = 24  # smaller "faces" are pattern noise (a MyKad's ghost image is ~60-90 px)
+
+
+def _run_detector(img: np.ndarray) -> list[Face]:
     h, w = img.shape[:2]
     with _lock:
         _load()
         _det.setInputSize((w, h))
         _, faces = _det.detect(img)
-    if faces is None:
-        return []
-    out = [Face(f, w, h) for f in faces]
-    out.sort(key=lambda f: f.raw[2] * f.raw[3], reverse=True)
-    return out
+    return [] if faces is None else [Face(f, w, h) for f in faces]
+
+
+def _scaled(face: Face, f: float, w: int, h: int) -> Face:
+    raw = face.raw.copy()
+    raw[:14] = raw[:14] / f
+    return Face(raw, w, h)
+
+
+def detect(img: np.ndarray) -> list[Face]:
+    """Faces, best first (size weighted by detector confidence).
+
+    When nothing is found, try again on a contrast-corrected copy (dim or
+    washed-out photos) and on an enlarged copy (the small portrait on an ID
+    card); coordinates always refer to the image given."""
+    h, w = img.shape[:2]
+    found = _run_detector(img)
+    if not found:
+        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+        lab[..., 0] = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8)).apply(lab[..., 0])
+        found = _run_detector(cv2.cvtColor(lab, cv2.COLOR_LAB2BGR))
+    if not found and max(h, w) < 1600:
+        f = min(2.0, 1600 / max(h, w))
+        big = cv2.resize(img, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
+        found = [_scaled(x, f, w, h) for x in _run_detector(big)]
+    found = [x for x in found if min(x.box[2], x.box[3]) >= MIN_FACE_PX]
+    found.sort(key=lambda x: float(x.raw[2] * x.raw[3]) * (0.5 + x.score), reverse=True)
+    return found
 
 
 def embed(img: np.ndarray, face: Face) -> np.ndarray:
+    """SFace embedding of the aligned face, averaged with its mirror image:
+    a standard test-time step that makes the match less sensitive to pose and
+    lighting from one side."""
     with _lock:
         _load()
-        feat = _rec.feature(_rec.alignCrop(img, face.raw))
-    v = feat.flatten().astype(np.float32)
+        aligned = _rec.alignCrop(img, face.raw)
+        a = _rec.feature(aligned).flatten().astype(np.float32)
+        b = _rec.feature(cv2.flip(aligned, 1)).flatten().astype(np.float32)
+    a, b = a / (np.linalg.norm(a) or 1.0), b / (np.linalg.norm(b) or 1.0)
+    v = a + b
     return v / (np.linalg.norm(v) or 1.0)
+
+
+def quality(img: np.ndarray, face: Face) -> dict:
+    """Capture quality of one face (ISO 29794-5 style components, simplified):
+    size, sharpness, exposure, head pose. `issues` lists what to fix."""
+    x, y, w, h = face.box
+    crop = img[max(0, y):y + h, max(0, x):x + w]
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.size else np.zeros((1, 1), np.uint8)
+    norm = cv2.resize(gray, (112, 112)) if gray.size > 1 else gray
+    sharp = float(cv2.Laplacian(norm, cv2.CV_64F).var())
+    bright = float(norm.mean())
+    clipped = float(((norm < 8) | (norm > 247)).mean())
+    ex1, ey1, ex2, ey2 = (float(v) for v in face.raw[4:8])
+    roll = float(np.degrees(np.arctan2(ey2 - ey1, ex2 - ex1)))
+    eye_mid_y = (ey1 + ey2) / 2
+    mouth_y = (float(face.raw[11]) + float(face.raw[13])) / 2
+    nose_y = float(face.raw[9])
+    pitch = (nose_y - eye_mid_y) / max(1.0, mouth_y - eye_mid_y)  # ~0.5 frontal; low = up, high = down
+    issues = []
+    if min(w, h) < 80:
+        issues.append("face_too_small")
+    if sharp < 60:
+        issues.append("face_blurry")
+    if bright < 60:
+        issues.append("face_too_dark")
+    elif bright > 205 or clipped > 0.25:
+        issues.append("face_overexposed")
+    if abs(face.yaw) > 0.25:
+        issues.append("head_turned")
+    if abs(roll) > 20:
+        issues.append("head_tilted")
+    if not 0.25 <= pitch <= 0.8:
+        issues.append("head_up_or_down")
+    if face.score < 0.8:
+        issues.append("face_unclear")
+    return {"face_px": int(min(w, h)), "sharpness": round(sharp, 1), "brightness": round(bright, 1),
+            "yaw": round(face.yaw, 3), "roll_deg": round(roll, 1), "pitch": round(pitch, 2),
+            "detector_score": round(face.score, 3), "issues": issues}
 
 
 def similarity(a: np.ndarray, b: np.ndarray) -> float:

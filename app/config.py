@@ -32,8 +32,8 @@ class Settings(BaseSettings):
     liveness_yaw_center: float = 0.13  # max for the "center" step
     name_match_threshold: int = 80  # 0-100 fuzzy score for claimed name vs document
     # Optional passive anti-spoof model (see README). Used only if the file exists.
-    passive_liveness_model: Path = Path("/app/models/liveness_mnv2.onnx")
-    passive_liveness_threshold: float = 0.10  # spoof score above this is flagged
+    passive_liveness_model: Path | None = None  # default: <models_dir>/antispoof.onnx
+    passive_liveness_threshold: float = 0.5  # real-minus-spoof logit margin below this is flagged
     passive_liveness_action: str = "review"  # "review" or "reject"
 
     # --- limits / housekeeping -------------------------------------------
@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     @property
     def db_url(self) -> str:
         return self.database_url or f"sqlite:///{self.data_dir / 'ekyc.db'}"
+
+    @property
+    def antispoof_model(self) -> Path:
+        return self.passive_liveness_model or self.models_dir / "antispoof.onnx"
 
     @property
     def media_dir(self) -> Path:

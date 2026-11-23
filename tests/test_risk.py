@@ -119,3 +119,15 @@ def test_consent_is_recorded(client, api_key):
 def test_postcode_state(postcode, state, ok):
     from app.pipeline import mykad
     assert mykad.postcode_matches_state(postcode, state) is ok
+
+
+def test_learning_report_from_reviewer_decisions(client, api_key, need_models):
+    r = client.get("/admin/api/learning", headers=ADMIN).json()
+    assert {"reviewed_cases", "face_match", "suggestions", "engine_vs_reviewer"} <= set(r)
+    v = _run(client, api_key, {"document_type": "passport", "external_ref": "learn-1"},
+             {"document_front": _passport("L66666666"), "selfie": synth.jpeg(synth.selfie())})
+    client.post(f"/admin/api/verifications/{v['id']}/decision", json={"decision": "approved"}, headers=ADMIN)
+    r2 = client.get("/admin/api/learning", headers=ADMIN).json()
+    assert r2["approved_by_reviewer"] >= r["approved_by_reviewer"] + 1
+    assert r2["face_match"]["genuine_scored"] >= 1
+    client.delete(f"{BASE}/{v['id']}", headers=api_key)

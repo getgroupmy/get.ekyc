@@ -96,3 +96,37 @@ def test_editor_in_metadata_is_flagged():
     assert integrity.editor_used(clean.getvalue()) is None
     assert integrity.edited_check({"selfie": buf.getvalue()})["code"] == "image_edited"
     assert integrity.selfie_copy_check(0.97)["code"] == "selfie_is_id_photo" and integrity.selfie_copy_check(0.7) is None
+
+
+def test_face_engine_finds_dim_and_small_faces_and_reports_quality(need_models):
+    import cv2
+    import numpy as np
+    from app.pipeline import face
+    from tests import synth
+    img = synth.face_bgr()
+    dim = cv2.convertScaleAbs(img, alpha=0.25, beta=0)
+    assert face.detect(dim), "contrast retry"
+    card = np.full((700, 1100, 3), 230, np.uint8)
+    card[300:418, 80:180] = cv2.resize(img[40:300, 150:370], (100, 118))  # a small ID-card portrait (~40 px face)
+    assert face.detect(card), "upscale retry"
+    f = face.detect(img)[0]
+    q = face.quality(img, f)
+    assert q["issues"] == [] and q["face_px"] > 80
+    blurred = cv2.GaussianBlur(img, (21, 21), 8)
+    assert "face_blurry" in face.quality(blurred, face.detect(blurred)[0])["issues"]
+    a, b = face.embed(img, f), face.embed(cv2.flip(img, 1), face.detect(cv2.flip(img, 1))[0])
+    assert face.similarity(a, b) > 0.95  # mirrored-average embedding is pose-symmetric
+
+
+def test_passive_liveness_when_model_present(need_models):
+    import cv2
+    import pytest
+    from app.pipeline import face, liveness
+    from tests import synth
+    if not liveness.passive_available():
+        pytest.skip("antispoof model not installed")
+    img = synth.face_bgr()
+    res = liveness.passive([(img, face.detect(img)[0])])
+    assert res["status"] == "pass" and res["detail"]["margin"] > 0.5
+    tiny = cv2.resize(img, (200, 200))
+    assert liveness.passive([(tiny, face.detect(tiny)[0])])["code"] == "face_too_small_for_liveness"
