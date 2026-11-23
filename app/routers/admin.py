@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .. import crypto, service, storage, webhooks
 from ..auth import new_api_key, require_admin
+from ..config import get_settings
 from ..db import ApiClient, AuditLog, Media, Verification, audit, get_db, utcnow
+from ..pipeline import images, mykad
 from ..schemas import CreateClient, Decision, verification_out
 
 router = APIRouter(prefix="/admin/api", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -113,3 +115,57 @@ def erase(vid: str, db: Session = Depends(get_db)):
     if v is None:
         raise HTTPException(404, "verification not found")
     service.erase(db, v, "admin")
+
+
+@router.post("/try", status_code=202)
+async def try_verification(
+    background: BackgroundTasks,
+    client_id: str = Form(...),
+    document_type: str = Form("auto"),
+    country: str = Form(""),
+    full_name: str = Form(""),
+    document_number: str = Form(""),
+    address: str = Form(""),
+    document_front: UploadFile = File(...),
+    selfie: UploadFile = File(...),
+    document_back: UploadFile | None = File(None),
+    db: Session = Depends(get_db),
+):
+    """The console's Try it: one upload, run as the chosen API client, so no
+    API key has to be pasted (keys are only stored hashed and cannot be listed)."""
+    c = db.get(ApiClient, client_id)
+    if c is None or not c.active:
+        raise HTTPException(404, "client not found or revoked")
+    if document_type not in ("auto", "passport", "national_id", "driving_licence"):
+        raise HTTPException(422, "unknown document type")
+    country = country.strip().upper() or None
+    if country and len(country) != 3:
+        raise HTTPException(422, "country must be ISO alpha-3, e.g. MYS")
+    if document_number and country == "MYS" and document_type == "national_id" and not mykad.parse_number(document_number):
+        raise HTTPException(422, "MyKad number must be 12 digits, YYMMDD-PB-####, dashes optional")
+    claimed = {k: v.strip() for k, v in (("full_name", full_name), ("document_number", document_number),
+                                         ("address", address)) if v.strip()} or None
+    v = Verification(id="ver_" + secrets.token_hex(12), client_id=c.id, external_ref="console-test",
+                     document_type=document_type, country=country, require_liveness=False,
+                     liveness_challenge=None, claimed=claimed)
+    db.add(v)
+    db.flush()
+    limit = get_settings().max_upload_mb * 1024 * 1024
+    for kind, f in (("document_front", document_front), ("selfie", selfie), ("document_back", document_back)):
+        if f is None or not f.filename:
+            continue
+        data = await f.read(limit + 1)
+        if len(data) > limit:
+            raise HTTPException(413, f"{kind} is larger than {get_settings().max_upload_mb} MB")
+        try:
+            images.decode(data)
+        except images.ImageError as exc:
+            raise HTTPException(422, f"{kind}: {exc}") from exc
+        mid = "med_" + secrets.token_hex(12)
+        v.media.append(Media(id=mid, kind=kind, path=storage.save(v.id, mid, data), sha256=crypto.sha256_hex(data)))
+    v.status = "processing"
+    v.submitted_at = utcnow()
+    audit(db, "admin", "verification.console_test", v.id, detail=c.id)
+    db.commit()
+    background.add_task(service.process, v.id)
+    return {"id": v.id, "status": v.status}

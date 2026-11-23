@@ -67,6 +67,23 @@ def _read_mrz(imgs: list[np.ndarray]) -> dict | None:
     return best
 
 
+_LICENCE_WORDS = ("LESEN MEMANDU", "DRIVING LICENCE", "DRIVING LICENSE", "DRIVER LICENSE", "DRIVER'S LICENSE",
+                  "PERMIS DE CONDUIRE", "FUHRERSCHEIN", "SURAT IZIN MENGEMUDI")
+
+
+def _detect_type(sides: list[np.ndarray], texts: list[str]) -> tuple[str, str, dict | None]:
+    """(document type, how it was decided, the MRZ if one was read).
+    An MRZ names the type outright (P = passport; I, A, C = identity card);
+    otherwise the printed wording; otherwise an identity card is assumed."""
+    found = _read_mrz(sides[::-1])
+    if found:
+        return ("passport" if found["document_code"].startswith("P") else "national_id"), "mrz", found
+    flat = " ".join(" ".join(t.upper().split()) for t in texts)
+    if any(w in flat for w in _LICENCE_WORDS):
+        return "driving_licence", "wording", None
+    return "national_id", "default", None
+
+
 def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, country: str | None,
             claimed: dict | None, today: date | None = None) -> DocumentResult:
     s = get_settings()
@@ -105,6 +122,13 @@ def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, coun
         text = "\n".join(t for texts in side_texts for t in texts)
         requested = country
         all_texts = [t for texts in side_texts for t in texts]
+        requested_type = document_type
+        early_mrz = None
+        if document_type == "auto":
+            document_type, type_source, early_mrz = _detect_type(sides, all_texts)
+            extracted_type = {"document_type": document_type, "document_type_source": type_source}
+        else:
+            extracted_type = {"document_type": document_type, "document_type_source": "requested"}
         if country is None and document_type != "passport":
             # No country given: printed wording, or a confidently read NRIC
             # number, decides which reader to use.
@@ -116,7 +140,8 @@ def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, coun
         is_mykad = country == "MYS" and document_type == "national_id"
         # A MyKad has no machine readable zone: never look for one, or OCR noise
         # on its patterned background can pass for a broken MRZ.
-        found_mrz = _read_mrz(sides[::-1]) if document_type in ("passport", "national_id") and not is_mykad else None
+        found_mrz = early_mrz or (_read_mrz(sides[::-1])
+                                  if document_type in ("passport", "national_id") and not is_mykad else None)
         card = (mykad.read_card(side_texts[0], side_texts[1] if len(side_texts) > 1 else None)
                 if country == "MYS" and document_type != "passport" else None)
 
@@ -162,6 +187,7 @@ def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, coun
             res.checks.append(check("document_data", PASS, note="verified against claimed data only"))
         else:
             res.checks.append(check("document_data", REVIEW, "no_machine_readable_data"))
+        extracted.update(extracted_type)
         found = countrylib.detect(all_texts, mrz_country=found_mrz["issuing_country"] if found_mrz and found_mrz["valid"] else None,
                                   mykad_confident=bool(card and card["confident"]))
         if found["country"]:

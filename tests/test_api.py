@@ -149,3 +149,16 @@ def test_driving_licence_without_claims_goes_to_review(client, api_key, need_mod
              {"document_front": card, "selfie": synth.jpeg(synth.selfie())})
     assert v["status"] == "review" and "no_machine_readable_data" in v["reasons"]
     assert _checks(v)["face_match"]["status"] == "pass"
+
+
+def test_console_try_runs_as_a_client(client, api_key, need_models):
+    cid = client.get("/admin/api/clients", headers=ADMIN).json()["items"][0]["id"]
+    files = {"document_front": ("f.jpg", synth.passport_image(synth.td3_lines(number="T44444444"), synth.face_bgr()), "image/jpeg"),
+             "selfie": ("s.jpg", synth.jpeg(synth.selfie()), "image/jpeg")}
+    r = client.post("/admin/api/try", data={"client_id": cid, "document_type": "auto"}, files=files, headers=ADMIN)
+    assert r.status_code == 202, r.text
+    v = client.get(f"/admin/api/verifications/{r.json()['id']}", headers=ADMIN).json()
+    ex = v["result"]["extracted"]
+    assert ex["document_type"] == "passport" and ex["document_type_source"] == "mrz" and ex["country"] == "UTO"
+    assert client.post("/admin/api/try", data={"client_id": cid}, files=files).status_code == 401
+    assert client.post("/admin/api/try", data={"client_id": "cli_nope"}, files=files, headers=ADMIN).status_code == 404

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, HttpUrl
 from .db import Verification
 from .reasons import describe
 
-DocumentType = Literal["passport", "national_id", "driving_licence"]
+DocumentType = Literal["auto", "passport", "national_id", "driving_licence"]
 
 
 class Claimed(BaseModel):
@@ -20,7 +20,7 @@ class Claimed(BaseModel):
 
 
 class CreateVerification(BaseModel):
-    document_type: DocumentType
+    document_type: DocumentType = Field(default="auto", description="auto = detect from the image")
     country: str | None = Field(default=None, pattern=r"^[A-Za-z]{3}$", description="ISO 3166-1 alpha-3, e.g. MYS")
     external_ref: str | None = Field(default=None, max_length=200, description="Your user id")
     claimed: Claimed | None = None

@@ -104,7 +104,8 @@ def _process(verification_id: str) -> None:
         else:
             doc_hash = None
             if outcome.document_number:
-                doc_hash = crypto.keyed_hash(f"{v.document_type}:{''.join(outcome.document_number.upper().split())}")
+                kind = outcome.extracted.get("document_type") or v.document_type
+                doc_hash = crypto.keyed_hash(f"{kind}:{''.join(outcome.document_number.upper().split())}")
             dup = _duplicates(db, v, outcome.selfie_embedding, doc_hash)
             status, reasons = outcome.status, list(outcome.reasons)
             if dup["status"] == REVIEW and status != "rejected":
