@@ -307,6 +307,12 @@ def _read_identity(res: DocumentResult, extracted: dict, sides, side_texts, all_
             res.checks.append(check("document_data", PASS, **detail))
         if family == "MyKAS":
             extracted.update(_dates_on_card(text, date.today()))
+        consistent = mykad.postcode_matches_state(card.get("postcode"), card.get("state"))
+        if consistent is False:
+            res.checks.append(check("address_consistency", REVIEW, "postcode_state_mismatch",
+                                    postcode=card["postcode"], state=card["state"]))
+        elif consistent:
+            res.checks.append(check("address_consistency", PASS))
         res.candidates = card["candidates"]
         res.name_readings = card["name_readings"]
     elif is_mykad:

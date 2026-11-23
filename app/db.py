@@ -79,6 +79,7 @@ class Verification(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
     media_purged: Mapped[bool] = mapped_column(Boolean, default=False)
     is_test: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    consent: Mapped[dict | None] = mapped_column(JSON)  # {"version", "accepted_at", "text_sha256"} as the app sent it
 
     client: Mapped[ApiClient] = relationship()
     media: Mapped[list["Media"]] = relationship(back_populates="verification", cascade="all, delete-orphan")
@@ -108,6 +109,16 @@ class SampleDoc(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class BlockedFace(Base):
+    """A confirmed fraudster's face: refused for every client from then on."""
+    __tablename__ = "blocked_faces"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    embedding: Mapped[bytes] = mapped_column(EncryptedBytes)
+    reason: Mapped[str] = mapped_column(String(300))
+    verification_id: Mapped[str | None] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -116,6 +127,10 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(60))
     verification_id: Mapped[str | None] = mapped_column(String(40), index=True)
     detail: Mapped[str | None] = mapped_column(Text)  # never put PII here
+    # Hash chain: each row's hash covers its content and the previous row's hash,
+    # so editing or deleting an old row breaks every hash after it.
+    prev_hash: Mapped[str | None] = mapped_column(String(64))
+    row_hash: Mapped[str | None] = mapped_column(String(64))
 
 
 _engine = None
@@ -124,6 +139,7 @@ _Session: sessionmaker[Session] | None = None
 
 def init_db() -> None:
     global _engine, _Session
+    _last_hash[0] = None
     s = get_settings()
     s.data_dir.mkdir(parents=True, exist_ok=True)
     s.media_dir.mkdir(parents=True, exist_ok=True)
@@ -156,6 +172,12 @@ def _migrate(engine) -> None:  # noqa: ANN001
     with engine.begin() as conn:
         if "phash" not in media_cols:
             conn.execute(text("ALTER TABLE media ADD COLUMN phash VARCHAR(16)"))
+        if "consent" not in cols:
+            conn.execute(text("ALTER TABLE verifications ADD COLUMN consent JSON"))
+        audit_cols = {c["name"] for c in inspect(engine).get_columns("audit_log")}
+        if "row_hash" not in audit_cols:
+            conn.execute(text("ALTER TABLE audit_log ADD COLUMN prev_hash VARCHAR(64)"))
+            conn.execute(text("ALTER TABLE audit_log ADD COLUMN row_hash VARCHAR(64)"))
         if "is_test" not in cols:
             conn.execute(text("ALTER TABLE verifications ADD COLUMN is_test BOOLEAN NOT NULL DEFAULT 0"))
             # Runs made from the console before tests were marked
@@ -181,5 +203,39 @@ def get_db() -> Iterator[Session]:
         yield db
 
 
+_audit_lock = __import__("threading").Lock()
+_last_hash: list[str | None] = [None]  # cached head of the chain
+
+
+def _row_digest(prev: str | None, at: datetime, actor: str, action: str, vid: str | None, detail: str | None) -> str:
+    import hashlib
+    payload = "\x1f".join([prev or "", at.isoformat(), actor, action, vid or "", detail or ""])
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
 def audit(db: Session, actor: str, action: str, verification_id: str | None = None, detail: str | None = None) -> None:
-    db.add(AuditLog(actor=actor, action=action, verification_id=verification_id, detail=detail))
+    from sqlalchemy import select
+    with _audit_lock:
+        if _last_hash[0] is None:
+            _last_hash[0] = db.scalar(select(AuditLog.row_hash).where(AuditLog.row_hash.is_not(None))
+                                      .order_by(AuditLog.id.desc()).limit(1)) or "genesis"
+        at = utcnow()
+        h = _row_digest(_last_hash[0], at, actor, action, verification_id, detail)
+        db.add(AuditLog(at=at, actor=actor, action=action, verification_id=verification_id, detail=detail,
+                        prev_hash=_last_hash[0], row_hash=h))
+        _last_hash[0] = h
+
+
+def verify_audit_chain(db: Session) -> dict:
+    """Recompute every hash: the first row that does not fit shows where the log was changed."""
+    from sqlalchemy import select
+    prev = None
+    n = 0
+    for row in db.scalars(select(AuditLog).where(AuditLog.row_hash.is_not(None)).order_by(AuditLog.id)):
+        expected_prev = prev or row.prev_hash  # the first chained row may follow pre-chain rows
+        if row.prev_hash != expected_prev or row.row_hash != _row_digest(row.prev_hash, row.at, row.actor, row.action,
+                                                                          row.verification_id, row.detail):
+            return {"ok": False, "rows_checked": n, "broken_at_id": row.id}
+        prev = row.row_hash
+        n += 1
+    return {"ok": True, "rows_checked": n}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from datetime import datetime as datetime_
 from typing import Literal
 
 from pydantic import BaseModel, Field, HttpUrl
@@ -22,6 +23,13 @@ class Claimed(BaseModel):
     plate: str | None = Field(default=None, max_length=20, description="Vehicle registration number, for vehicle documents")
 
 
+class Consent(BaseModel):
+    """What the user agreed to in your app (PDPA: explicit consent for biometrics)."""
+    version: str = Field(max_length=40, description="Your consent notice version, e.g. 2026-11")
+    accepted_at: datetime_ = Field(description="When the user accepted it")
+    text_sha256: str | None = Field(default=None, max_length=64, description="Hash of the notice text shown")
+
+
 class CreateVerification(BaseModel):
     document_type: DocumentType = Field(default="auto", description="auto = detect from the image")
     country: str | None = Field(default=None, pattern=r"^[A-Za-z]{3}$", description="ISO 3166-1 alpha-3, e.g. MYS")
@@ -29,6 +37,7 @@ class CreateVerification(BaseModel):
     claimed: Claimed | None = None
     require_liveness: bool | None = None
     test: bool = Field(default=False, description="A test run: never used for duplicates, deleted after 48 h")
+    consent: Consent | None = None
 
 
 class CreateClient(BaseModel):
@@ -66,6 +75,7 @@ def verification_out(v: Verification, required: list[str], *, admin: bool = Fals
         "completed_at": _ts(v.completed_at),
     }
     if admin:
+        out["consent"] = v.consent
         out["client"] = v.client.name
         out["claimed"] = v.claimed
         out["review_note"] = v.review_note

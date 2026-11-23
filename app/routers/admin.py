@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from .. import crypto, service, storage, webhooks
 from ..auth import new_api_key, require_admin
 from ..config import get_settings
-from ..db import ApiClient, AuditLog, Media, SampleDoc, Verification, audit, get_db, utcnow
+from ..db import ApiClient, AuditLog, BlockedFace, Media, SampleDoc, Verification, audit, get_db, utcnow
 from ..pipeline import catalog, images, integrity, mykad
 from ..pipeline.detect import detect as detect_document
 from ..schemas import CreateClient, Decision, verification_out
@@ -341,3 +341,57 @@ async def try_verification(
     db.commit()
     background.add_task(service.process, v.id)
     return {"id": v.id, "status": v.status}
+
+
+# --- face blocklist (all clients) ----------------------------------------------------------
+@router.post("/verifications/{vid}/block")
+def block_person(vid: str, reason: str = Form("confirmed fraud"), db: Session = Depends(get_db)):
+    """Add this verification's selfie face to the blocklist and reject it."""
+    v = db.get(Verification, vid)
+    if v is None or not v.face_embedding:
+        raise HTTPException(404, "verification or its face not found")
+    b = BlockedFace(id="blk_" + secrets.token_hex(8), embedding=v.face_embedding, reason=reason.strip()[:300] or "fraud",
+                    verification_id=v.id)
+    db.add(b)
+    if v.status in service.FINAL:
+        v.status, v.decided_by, v.completed_at = "rejected", "admin", utcnow()
+        v.reasons = ["face_blocklisted"]
+    audit(db, "admin", "face.blocked", v.id, detail=b.id)
+    db.flush()
+    webhooks.notify(v, v.client)
+    return {"id": b.id}
+
+
+@router.get("/blocklist")
+def list_blocklist(db: Session = Depends(get_db)):
+    return {"items": [{"id": b.id, "reason": b.reason, "verification_id": b.verification_id,
+                       "created_at": b.created_at.isoformat() + "Z"} for b in db.scalars(select(BlockedFace))]}
+
+
+@router.delete("/blocklist/{bid}", status_code=204)
+def unblock(bid: str, db: Session = Depends(get_db)):
+    b = db.get(BlockedFace, bid)
+    if b is None:
+        raise HTTPException(404, "not found")
+    db.delete(b)
+    audit(db, "admin", "face.unblocked", b.verification_id, detail=bid)
+
+
+@router.get("/audit/verify")
+def verify_audit(db: Session = Depends(get_db)):
+    from ..db import verify_audit_chain
+    return verify_audit_chain(db)
+
+
+@router.get("/sanctions")
+def sanctions_status():
+    from .. import sanctions
+    return sanctions.status()
+
+
+@router.post("/sanctions/refresh")
+def sanctions_refresh():
+    from .. import sanctions
+    changed = sanctions.refresh(force=True)
+    hits = service.rescreen_all() if changed else 0
+    return {**sanctions.status(), "changed": changed, "rescreen_hits": hits}

@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     max_upload_mb: int = 12
     session_ttl_minutes: int = 60  # unsubmitted sessions expire after this
     retention_days: int = 0  # 0 = keep; N = delete images N days after completion
+    sanctions_enabled: bool = True  # screen people against the UN (and MOHA CSV) lists
+    sanctions_un_url: str = "https://scsanctions.un.org/resources/xml/en/consolidated.xml"
     test_retention_hours: int = 48  # test verifications are deleted entirely after this (0 = keep)
     webhook_timeout_seconds: float = 10.0
     cors_origins: str = ""  # comma separated; empty = no CORS

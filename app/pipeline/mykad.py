@@ -336,3 +336,40 @@ def family_by_colour(img) -> str | None:  # noqa: ANN001 - BGR image
              "MyKAS": hist[38:80].sum(), "MyKad": hist[80:130].sum()}
     best = max(bands, key=bands.get)
     return best if bands[best] > 0.45 * coloured.sum() else None
+
+
+# --- postcode vs state ------------------------------------------------------------
+# First two digits of a postcode -> the states it can belong to. Ranges that
+# straddle a border allow both, so only clear contradictions are flagged.
+_POSTCODE_STATES: dict[str, set[str]] = {}
+for _states, _prefixes in (
+    ({"PERLIS"}, ("01", "02")),
+    ({"KEDAH"}, ("05", "06", "07", "08")),
+    ({"KEDAH", "PULAU PINANG", "PENANG"}, ("09",)),
+    ({"PULAU PINANG", "PENANG"}, ("10", "11", "12", "13", "14")),
+    ({"KELANTAN"}, ("15", "16", "17", "18")),
+    ({"TERENGGANU"}, ("20", "21", "22", "23", "24")),
+    ({"PAHANG"}, ("25", "26", "27", "28", "49")),
+    ({"PERAK"}, ("30", "31", "32", "33", "34", "35", "36")),
+    ({"PERAK", "PAHANG"}, ("39",)),
+    ({"SELANGOR"}, ("40", "41", "42", "43", "44", "45", "46", "47", "48", "63", "64")),
+    ({"KUALA LUMPUR"}, ("50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60")),
+    ({"SELANGOR", "KUALA LUMPUR"}, ("68",)),
+    ({"PUTRAJAYA"}, ("62",)),
+    ({"NEGERI SEMBILAN"}, ("70", "71", "72", "73")),
+    ({"MELAKA"}, ("75", "76", "77", "78")),
+    ({"JOHOR"}, ("79", "80", "81", "82", "83", "84", "85", "86")),
+    ({"LABUAN"}, ("87",)),
+    ({"SABAH"}, ("88", "89", "90", "91")),
+    ({"SARAWAK"}, ("93", "94", "95", "96", "97", "98")),
+):
+    for _p in _prefixes:
+        _POSTCODE_STATES.setdefault(_p, set()).update(_states)
+
+
+def postcode_matches_state(postcode: str | None, state: str | None) -> bool | None:
+    """True / False, or None when it cannot be judged."""
+    if not postcode or not state or len(postcode) != 5:
+        return None
+    allowed = _POSTCODE_STATES.get(postcode[:2])
+    return None if allowed is None else state.upper() in allowed

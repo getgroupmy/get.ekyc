@@ -198,6 +198,28 @@ def is_valid(secret: str, timestamp: str, raw_body: bytes, signature: str) -> bo
 
 A manual decision in the console sends the same webhook with `decided_by: "admin"`.
 
+## Fraud and compliance controls
+
+| Control | What it does | Result |
+|---|---|---|
+| Reused photo | Perceptual hash of every upload; the same picture (resized or recompressed) under another user | review |
+| Selfie copied from the ID | Selfie matches the ID portrait at ≥ 0.93, as only a photo of the photo does | review |
+| Edited image | Photoshop, Snapseed, Canva… named in EXIF / XMP | review |
+| Duplicate document / face | Same ID number or face under another user of the same app | review |
+| Edited repeat attempt | Same ID number seen before with a different name or date of birth | review |
+| Face blocklist | Admin "Block this person": that face is refused for every app | reject |
+| Sanctions | UN Security Council list (downloaded daily) and an optional MOHA CSV; name in any order, birth year checked; the whole approved base is re-screened when the list changes | review |
+| MyKad consistency | IC date / state code / gender digit vs LELAKI/PEREMPUAN, front vs back number, postcode vs state | review |
+| Re-authentication | `POST /v1/verifications/reauth` (external_ref + selfie): is this the driver who was verified? For going online / random checks | match / no match |
+| Consent | `consent: {version, accepted_at, text_sha256}` stored with the verification (PDPA s.40: explicit consent for biometrics) | recorded |
+| Audit trail | Hash-chained: editing or deleting a row breaks every later hash; `GET /admin/api/audit/verify` checks it | tamper-evident |
+
+Not yet built (from the research, in priority order): passive liveness model (MiniFASNet, Apache-2.0) on the
+head-turn frames; screen-recapture / photocopy detection; a capture page that blocks gallery uploads and virtual
+cameras (injection attacks); face-quality gating (BSI OFIQ, ISO 29794-5); NFC passport reading with passive
+authentication (mobile app + BSI master list); Bank Negara FAR audit sampling and monthly reports (only if the
+wallet is a licensed e-money product); the new-generation MyKad (issued since 17 Sep 2026) needs real samples.
+
 ## Decision rules
 
 Any failed check → `rejected`. Otherwise any uncertain check → `review`. Otherwise `approved`

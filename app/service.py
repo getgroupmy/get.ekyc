@@ -9,7 +9,7 @@ import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import crypto, storage, webhooks
+from . import crypto, sanctions, storage, webhooks
 from .config import get_settings
 from .db import Media, Verification, audit, session_scope, utcnow
 from .pipeline import face as facelib
@@ -60,7 +60,66 @@ def erase(db: Session, v: Verification, actor: str) -> None:
     audit(db, actor, "verification.erased", v.id)
 
 
-def _duplicates(db: Session, v: Verification, embedding: np.ndarray | None, doc_hash: str | None) -> dict:
+def _details_differ(a: dict, b: dict) -> bool:
+    from rapidfuzz import fuzz
+    if a.get("date_of_birth") and b.get("date_of_birth") and a["date_of_birth"] != b["date_of_birth"]:
+        return True
+    na, nb = (a.get("full_name") or "").upper(), (b.get("full_name") or "").upper()
+    return bool(na and nb and fuzz.token_set_ratio(na, nb) < 80)
+
+
+def _sanctions_check(extracted: dict) -> dict | None:
+    """People only (identity and driver documents with a name)."""
+    if not get_settings().sanctions_enabled or extracted.get("document_category") == "vehicle":
+        return None
+    if not extracted.get("full_name"):
+        return None
+    if not sanctions.entries():
+        return check("sanctions", "skipped", "sanctions_list_unavailable")
+    hits = sanctions.screen(extracted["full_name"], extracted.get("date_of_birth"))
+    if hits:
+        return check("sanctions", REVIEW, "sanctions_possible_match", matches=hits)
+    return check("sanctions", PASS, lists=sorted({e.source for e in sanctions.entries()}))
+
+
+def rescreen_all() -> int:
+    """After a list update: screen every approved real verification again (BNM AML/CFT 27)."""
+    n = 0
+    with session_scope() as db:
+        for v in db.scalars(select(Verification).where(Verification.status == "approved",
+                                                       Verification.is_test.is_(False))):
+            ex = (v.result or {}).get("extracted") or {}
+            hits = sanctions.screen(ex.get("full_name"), ex.get("date_of_birth")) if ex.get("full_name") else []
+            if hits:
+                v.status, v.decided_by = "review", "sanctions_rescreen"
+                v.reasons = list(v.reasons or []) + ["sanctions_possible_match"]
+                v.result = {**v.result, "checks": v.result.get("checks", []) +
+                            [check("sanctions", REVIEW, "sanctions_possible_match", matches=hits, rescreen=True)]}
+                audit(db, "system", "sanctions.rescreen_hit", v.id)
+                db.flush()
+                webhooks.notify(v, v.client)
+                n += 1
+    return n
+
+
+def blocked_face(db: Session, embedding: np.ndarray | None) -> dict | None:
+    """A match against the blocklist, across all clients."""
+    from .db import BlockedFace
+    if embedding is None:
+        return None
+    s = get_settings()
+    best = None
+    for b in db.scalars(select(BlockedFace)):
+        sim = facelib.similarity(embedding, np.frombuffer(b.embedding, np.float32))
+        if sim >= s.duplicate_face_threshold and (best is None or sim > best[0]):
+            best = (sim, b)
+    if best:
+        return {"blocked_id": best[1].id, "similarity": round(best[0], 4), "reason": best[1].reason}
+    return None
+
+
+def _duplicates(db: Session, v: Verification, embedding: np.ndarray | None, doc_hash: str | None,
+                details: dict | None = None) -> dict:
     s = get_settings()
     q = select(Verification).where(Verification.client_id == v.client_id, Verification.id != v.id,
                                    Verification.status.in_(("approved", "review")),
@@ -72,7 +131,11 @@ def _duplicates(db: Session, v: Verification, embedding: np.ndarray | None, doc_
             continue  # same user re-verifying
         if doc_hash and other.doc_number_hash == doc_hash:
             hits.append(other.id)
-            code = "duplicate_document"
+            # The same ID number with a different name or date of birth: an edited copy.
+            if details and _details_differ(details, (other.result or {}).get("extracted") or {}):
+                code = "document_details_changed"
+            elif code != "document_details_changed":
+                code = "duplicate_document"
         elif embedding is not None and other.face_embedding:
             if facelib.similarity(embedding, np.frombuffer(other.face_embedding, np.float32)) >= s.duplicate_face_threshold:
                 hits.append(other.id)
@@ -134,13 +197,26 @@ def _process(verification_id: str) -> None:
             if outcome.document_number:
                 kind = outcome.extracted.get("document_type") or v.document_type
                 doc_hash = crypto.keyed_hash(f"{kind}:{''.join(outcome.document_number.upper().split())}")
-            dup = _duplicates(db, v, outcome.selfie_embedding, doc_hash)
+            dup = _duplicates(db, v, outcome.selfie_embedding, doc_hash, outcome.extracted)
             status, reasons = outcome.status, list(outcome.reasons)
             if dup["status"] == REVIEW and status != "rejected":
                 reasons.append(dup["code"])
                 status = "review"
+            blocked = None if v.is_test else blocked_face(db, outcome.selfie_embedding)
+            extra = [dup]
+            if blocked:
+                extra.append(check("blocklist", "fail", "face_blocklisted", **blocked))
+                status = "rejected"
+                reasons = ["face_blocklisted"] + [r for r in reasons if r != "manual_approval_required"]
             v.status, v.reasons = status, reasons
-            v.result = {"checks": outcome.checks + [dup], "extracted": outcome.extracted, "scores": outcome.scores}
+            scr = _sanctions_check(outcome.extracted) if not v.is_test else None
+            if scr:
+                extra.append(scr)
+                if scr["status"] == REVIEW and status == "approved":
+                    status = "review"
+                if scr["status"] == REVIEW:
+                    reasons.append(scr["code"])
+            v.result = {"checks": outcome.checks + extra, "extracted": outcome.extracted, "scores": outcome.scores}
             v.doc_number_hash = doc_hash
             if outcome.selfie_embedding is not None:
                 v.face_embedding = outcome.selfie_embedding.astype(np.float32).tobytes()
@@ -152,8 +228,14 @@ def _process(verification_id: str) -> None:
 
 
 def housekeeping() -> None:
-    """Expire abandoned sessions and enforce the image retention period."""
+    """Expire abandoned sessions, enforce retention, refresh the sanctions list."""
     s = get_settings()
+    try:
+        if sanctions.refresh():
+            hits = rescreen_all()
+            log.info("sanctions list updated; %d verification(s) sent to review", hits)
+    except Exception:  # noqa: BLE001
+        log.exception("sanctions refresh failed")
     now = utcnow()
     with session_scope() as db:
         stale = select(Verification).where(Verification.status == "created",

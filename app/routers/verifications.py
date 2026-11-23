@@ -4,7 +4,7 @@ import re
 import secrets
 from datetime import timedelta
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -51,9 +51,11 @@ def create(body: CreateVerification, client: ApiClient = Depends(require_client)
         require_liveness=live, liveness_challenge=liveness.new_challenge() if live else None,
         claimed=body.claimed.model_dump(mode="json", exclude_none=True) if body.claimed else None,
         is_test=body.test,
+        consent=body.consent.model_dump(mode="json") if body.consent else None,
     )
     db.add(v)
-    audit(db, f"client:{client.id}", "verification.created", v.id)
+    audit(db, f"client:{client.id}", "verification.created", v.id,
+          f"consent {body.consent.version}" if body.consent else "no consent recorded")
     db.flush()
     return verification_out(v, service.required_media(v))
 
@@ -141,3 +143,42 @@ async def detect_document(file: UploadFile = File(...), client: ApiClient = Depe
         return detect(data)
     except images.ImageError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/reauth", tags=["verifications"])
+async def reauthenticate(external_ref: str = Form(...), selfie: UploadFile = File(...),
+                         client: ApiClient = Depends(require_client), db: Session = Depends(get_db)):
+    """Is this the person who was verified as `external_ref`? For a driver going
+    online or a random check mid-shift: the new selfie is matched against the
+    face from that user's latest approved verification. Nothing is stored."""
+    import numpy as np
+
+    from ..pipeline import face as facelib
+    s = get_settings()
+    v = db.scalars(select(Verification).where(Verification.client_id == client.id,
+                                              Verification.external_ref == external_ref,
+                                              Verification.status == "approved",
+                                              Verification.face_embedding.is_not(None))
+                   .order_by(Verification.completed_at.desc()).limit(1)).first()
+    if v is None:
+        raise HTTPException(404, "no approved verification with a face for this external_ref")
+    limit = s.max_upload_mb * 1024 * 1024
+    data = await selfie.read(limit + 1)
+    if len(data) > limit:
+        raise HTTPException(413, "image too large")
+    try:
+        img = images.decode(data)
+    except images.ImageError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    faces = facelib.detect(img)
+    if not faces:
+        audit(db, f"client:{client.id}", "reauth.no_face", v.id)
+        return {"match": False, "reason": "no_face", "verification_id": v.id}
+    emb = facelib.embed(img, faces[0])
+    sim = facelib.similarity(emb, np.frombuffer(v.face_embedding, np.float32))
+    blocked = service.blocked_face(db, emb)
+    match = sim >= s.face_match_threshold and not blocked
+    audit(db, f"client:{client.id}", "reauth." + ("match" if match else "no_match"), v.id, f"{sim:.3f}")
+    return {"match": match, "similarity": round(sim, 4), "threshold": s.face_match_threshold,
+            "verification_id": v.id, "blocked": bool(blocked),
+            "reason": None if match else ("face_blocklisted" if blocked else "face_mismatch")}

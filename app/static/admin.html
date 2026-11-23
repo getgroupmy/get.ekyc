@@ -172,7 +172,7 @@ function show(authed) {
 function tab(name) {
   for (const b of $("nav").children) b.classList.toggle("on", b.dataset.tab === name);
   for (const id of ["queue", "clients", "try"]) $(id).classList.toggle("hide", id !== name);
-  if (name === "queue") loadQueue();
+  if (name === "queue") { loadQueue(); sanctionsLine().then(t => { if (t) $("health").textContent = $("health").textContent.split(" · sanctions")[0] + t; }); }
   if (name === "clients") loadClients();
   if (name === "try") loadTryClients();
 }
@@ -237,6 +237,13 @@ async function openDetail(id) {
       h("button", { class: "btn danger", onclick: decide("rejected") }, "Reject"),
       h("span", { style: "flex:1" }),
       h("button", { class: "btn", onclick: async () => { await json(`/verifications/${id}/test?test=${!v.test}`, { method: "POST" }); loadQueue(); openDetail(id); } }, v.test ? "Mark as real" : "Mark as test"),
+      h("button", { class: "btn danger", onclick: async () => {
+        const reason = prompt("Block this person's face for every app? Reason (kept in the audit trail):", "confirmed fraud");
+        if (!reason) return;
+        const fd = new FormData(); fd.append("reason", reason);
+        const r = await fetch(`/admin/api/verifications/${id}/block`, { method: "POST", body: fd, headers: { "X-Admin-Token": token } });
+        if (!r.ok) return alert((await r.json()).detail || "Could not block");
+        loadQueue(); openDetail(id); } }, "Block this person"),
       h("button", { class: "btn danger", onclick: async () => { if (confirm(v.test ? "Delete this test verification entirely?" : "Permanently erase the images and personal data for this verification?")) { await api("/verifications/" + id, { method: "DELETE" }); $("detail").replaceChildren(); loadQueue(); } } }, v.test ? "Delete test" : "Erase data"))) : "",
     h("h2", { style: "margin-top:16px" }, "Audit trail"),
     h("pre", {}, v.audit.map(a => `${when(a.at)}  ${a.actor}  ${a.action}  ${a.detail || ""}`).join("\n"))));
@@ -371,6 +378,11 @@ $("trun").onclick = async () => {
   } catch (e) { say("Failed: " + e.message); }
 };
 
+async function sanctionsLine() {
+  try { const st = await json("/sanctions");
+    return st.enabled ? (st.entries ? ` · sanctions list ${st.entries} entries` : " · sanctions list not loaded") : ""; }
+  catch { return ""; }
+}
 fetch("/health").then(r => r.json()).then(s => $("health").textContent =
   s.status === "ok" ? "engine ready" + (s.passive_liveness ? " · passive liveness on" : "") : "engine degraded — check models");
 if (token) json("/stats").then(() => show(true)).catch(() => {});
