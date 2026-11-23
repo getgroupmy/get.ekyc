@@ -23,6 +23,8 @@ PATHS="$BREW/bin:$BREW/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 stop() {  # $1 label
   sudo launchctl bootout "system/$1" 2>/dev/null || true
+  # bootout returns before the job is gone; bootstrapping too soon fails with error 5
+  for _ in $(seq 1 20); do sudo launchctl print "system/$1" >/dev/null 2>&1 || break; sleep 0.5; done
   sudo rm -f "$DIR/$1.plist"
 }
 
@@ -50,7 +52,11 @@ install_plist() {  # $1 label, $2 plist body
   stop "$1"
   sudo install -o root -g wheel -m 644 "$tmp" "$DIR/$1.plist"
   rm -f "$tmp"
-  sudo launchctl bootstrap system "$DIR/$1.plist"
+  for try in 1 2 3 4 5; do
+    sudo launchctl bootstrap system "$DIR/$1.plist" 2>/dev/null && return 0
+    sleep 2
+  done
+  sudo launchctl bootstrap system "$DIR/$1.plist"  # last try, shows the error
 }
 
 install_plist "$APP" "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
@@ -75,9 +81,29 @@ install_plist "$APP" "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 </dict></plist>"
 echo "✓ get.ekyc server installed as a startup service ($APP)"
 
+# No token saved yet: ask for it here (hidden), so it never shows on screen.
+if [ ! -f "$DIR/com.cloudflare.cloudflared.plist" ] && [ ! -s "$TOKEN" ] && [ -x "$BREW/bin/cloudflared" ]; then
+  echo
+  echo "Cloudflare tunnel token: in Cloudflare Zero Trust > Networks > Tunnels > your ekyc tunnel > Configure,"
+  echo "copy the install command shown there (it contains a long text starting with eyJ)."
+  printf "Paste it here and press Enter (nothing will show; Enter alone skips the tunnel): "
+  IFS= read -rs PASTED || PASTED=""
+  echo
+  T="$(printf '%s' "$PASTED" | tr ' \t' '\n\n' | grep -E '^eyJ[A-Za-z0-9_=-]{40,}' | tail -1 || true)"
+  GAVE="${PASTED:+yes}"; unset PASTED
+  if [ -n "$T" ]; then
+    mkdir -p "$HOMEDIR/.cloudflared" && chmod 700 "$HOMEDIR/.cloudflared"
+    ( umask 077; printf '%s' "$T" > "$TOKEN" )
+    echo "✓ Token saved to $TOKEN (only you can read it)"
+  elif [ -n "$GAVE" ]; then
+    echo "• No token found in what was pasted (it starts with eyJ). Skipping the tunnel."
+  fi
+  unset T
+fi
+
 if [ -f "$DIR/com.cloudflare.cloudflared.plist" ]; then
   echo "• Tunnel: already a service (installed with 'cloudflared service install'); left as it is."
-elif [ -f "$TOKEN" ] && [ -x "$BREW/bin/cloudflared" ]; then
+elif [ -s "$TOKEN" ] && [ -x "$BREW/bin/cloudflared" ]; then
   # Only now replace a tunnel started by hand (the service takes over).
   pkill -f "cloudflared tunnel run" 2>/dev/null || true
   # The token stays in its file (mode 600); it is never written into the plist.
@@ -103,7 +129,7 @@ elif [ -f "$TOKEN" ] && [ -x "$BREW/bin/cloudflared" ]; then
   echo "✓ Cloudflare tunnel installed as a startup service ($TUN)"
 else
   [ -x "$BREW/bin/cloudflared" ] || echo "• Tunnel: cloudflared is not installed (brew install cloudflared)."
-  [ -f "$TOKEN" ] || echo "• Tunnel: no token file at $TOKEN. Save the tunnel token there and run this again."
+  [ -s "$TOKEN" ] || echo "• Tunnel: no token file at $TOKEN. Save the tunnel token there and run this again."
   echo "  A tunnel you started by hand was left running."
 fi
 
