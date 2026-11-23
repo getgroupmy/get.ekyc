@@ -236,3 +236,22 @@ def test_vehicle_document_needs_no_selfie(client, api_key, need_models):
     assert v["status"] == "approved", v["reasons"]
     assert v["result"]["extracted"]["plate"] == "WXY1234"
     client.delete(f"{BASE}/{vid}", headers=api_key)
+
+
+def test_client_usage_counts_and_permanent_delete(client, api_key, need_models):
+    new = client.post("/admin/api/clients", json={"name": "spare"}, headers=ADMIN).json()
+    assert client.delete(f"/admin/api/clients/{new['id']}/permanent", headers=ADMIN).status_code == 409  # still active
+    client.delete(f"/admin/api/clients/{new['id']}", headers=ADMIN)
+    row = next(c for c in client.get("/admin/api/clients", headers=ADMIN).json()["items"] if c["id"] == new["id"])
+    assert row["deletable"] and row["uses"] == 0
+    assert client.delete(f"/admin/api/clients/{new['id']}/permanent", headers=ADMIN).status_code == 204
+    assert all(c["id"] != new["id"] for c in client.get("/admin/api/clients", headers=ADMIN).json()["items"])
+    # a used key is kept
+    used = client.post("/admin/api/clients", json={"name": "used"}, headers=ADMIN).json()
+    key = {"X-API-Key": used["api_key"]}
+    doc = synth.passport_image(synth.td3_lines(number="U77777777"), synth.face_bgr())
+    _run(client, key, {"document_type": "passport"}, {"document_front": doc, "selfie": synth.jpeg(synth.selfie())})
+    client.delete(f"/admin/api/clients/{used['id']}", headers=ADMIN)
+    row = next(c for c in client.get("/admin/api/clients", headers=ADMIN).json()["items"] if c["id"] == used["id"])
+    assert row["uses"] == 1 and row["approved"] + row["review"] + row["rejected"] == 1 and not row["deletable"]
+    assert client.delete(f"/admin/api/clients/{used['id']}/permanent", headers=ADMIN).status_code == 409

@@ -102,7 +102,8 @@
       <div id="cnew"></div>
     </div>
     <div class="card"><h2>Clients</h2>
-      <table><thead><tr><th>Name</th><th>Key</th><th>Webhook</th><th>Status</th><th></th></tr></thead><tbody id="crows"></tbody></table>
+      <table><thead><tr><th>Name</th><th>Key</th><th>Webhook</th><th>Status</th><th>Uses</th><th>Approved</th><th>Rejected</th><th>Review</th><th>Tests</th><th></th></tr></thead><tbody id="crows"></tbody></table>
+      <p class="mute">Uses counts real verifications. A revoked key that was never used can be deleted; a used one stays as a record.</p>
     </div>
   </section>
 
@@ -247,7 +248,13 @@ async function loadClients() {
   $("crows").replaceChildren(...list.items.map(c => h("tr", {},
     h("td", {}, c.name), h("td", { class: "secret" }, c.key_prefix + "…"), h("td", {}, c.webhook_url || "—"),
     h("td", {}, h("span", { class: "pill " + (c.active ? "approved" : "rejected") }, c.active ? "active" : "revoked")),
-    h("td", {}, c.active ? h("button", { class: "btn danger", onclick: async () => { if (confirm(`Revoke the key for ${c.name}?`)) { await api("/clients/" + c.id, { method: "DELETE" }); loadClients(); } } }, "Revoke") : ""))));
+    h("td", {}, String(c.uses)), h("td", { class: "approved" }, String(c.approved)), h("td", { class: "rejected" }, String(c.rejected)),
+    h("td", { class: "review" }, String(c.review)), h("td", { class: "mute" }, String(c.tests)),
+    h("td", {}, c.active
+      ? h("button", { class: "btn danger", onclick: async () => { if (confirm(`Revoke the key for ${c.name} (${c.key_prefix}…)?`)) { await api("/clients/" + c.id, { method: "DELETE" }); loadClients(); } } }, "Revoke")
+      : c.deletable
+        ? h("button", { class: "btn danger", onclick: async () => { if (confirm(`Delete the unused key ${c.key_prefix}… permanently?`)) { await api(`/clients/${c.id}/permanent`, { method: "DELETE" }); loadClients(); } } }, "Delete")
+        : h("span", { class: "mute" }, "kept: used")))));
 }
 $("cadd").onclick = async () => {
   const body = { name: $("cname").value.trim(), webhook_url: $("chook").value.trim() || null };
@@ -282,7 +289,8 @@ async function loadTryClients() {
     pick.replaceChildren(h("option", { value: "" }, kind === "document_front" ? "Upload new…" : "Upload new / none"),
       ...mine.map(x => h("option", { value: x.id }, (x.is_default ? "★ " : "") + x.label)));
     const def = mine.find(x => x.is_default);
-    pick.value = mine.some(x => x.id === keep) ? keep : (def ? def.id : "");
+    const chosenFile = el.querySelector(".file").files[0];
+    pick.value = chosenFile ? "" : mine.some(x => x.id === keep) ? keep : (def ? def.id : "");
   }
   renderSamples();
   detectFront();

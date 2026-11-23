@@ -36,9 +36,45 @@ def create_client(body: CreateClient, db: Session = Depends(get_db)):
     return {**_client_out(c), "api_key": key, "webhook_secret": secret}
 
 
+def _usage(db: Session) -> dict[str, dict]:
+    rows = db.execute(select(Verification.client_id, Verification.is_test, Verification.status, func.count())
+                      .group_by(Verification.client_id, Verification.is_test, Verification.status)).all()
+    out: dict[str, dict] = {}
+    for cid, is_test, status, n in rows:
+        u = out.setdefault(cid, {"uses": 0, "approved": 0, "rejected": 0, "review": 0, "tests": 0})
+        if is_test:
+            u["tests"] += n
+            continue
+        u["uses"] += n
+        if status in ("approved", "rejected", "review"):
+            u[status] += n
+    return out
+
+
 @router.get("/clients")
 def list_clients(db: Session = Depends(get_db)):
-    return {"items": [_client_out(c) for c in db.scalars(select(ApiClient).order_by(ApiClient.created_at))]}
+    usage = _usage(db)
+    empty = {"uses": 0, "approved": 0, "rejected": 0, "review": 0, "tests": 0}
+    items = []
+    for c in db.scalars(select(ApiClient).order_by(ApiClient.created_at)):
+        u = usage.get(c.id, empty)
+        items.append({**_client_out(c), **u, "deletable": not c.active and u["uses"] == 0 and u["tests"] == 0})
+    return {"items": items}
+
+
+@router.delete("/clients/{cid}/permanent", status_code=204)
+def delete_client(cid: str, db: Session = Depends(get_db)):
+    """Only a revoked key that was never used: its verifications would otherwise
+    lose the record of which app sent them."""
+    c = db.get(ApiClient, cid)
+    if c is None:
+        raise HTTPException(404, "client not found")
+    if c.active:
+        raise HTTPException(409, "revoke the key first")
+    if db.scalar(select(func.count()).select_from(Verification).where(Verification.client_id == cid)):
+        raise HTTPException(409, "this key has been used; it stays, revoked, as a record")
+    db.delete(c)
+    audit(db, "admin", "client.deleted", detail=cid)
 
 
 @router.delete("/clients/{cid}", status_code=204)

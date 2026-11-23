@@ -161,3 +161,8 @@ def test_mykad_card_serial_is_the_document_number():
     res = document.analyze(front, back, "auto", None, {}, today=TODAY)
     assert res.extracted["id_number"] == "900514-10-5232" and res.extracted["document_number"] == "D2009A76CE"
     assert res.extracted["document_subtype"] == "MyKad" and res.extracted["holder"] == "citizen"
+
+
+def test_malaysian_vehicle_wording_names_the_country():
+    res = _doc(["SIJIL PEMILIKAN KENDERAAN", "No. Pendaftaran: WXY 1234"])
+    assert res.extracted["country"] == "MYS" and res.extracted["country_source"] == "wording"
