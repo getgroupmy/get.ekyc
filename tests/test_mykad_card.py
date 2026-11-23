@@ -158,3 +158,23 @@ def test_order_free_and_single_word_goes_to_review():
     readings = ["ARJUN SINGH DHILLON A/L HARPAL SINGH", "ARJUN"]  # second reading cut off
     assert names.match("harpal singh arjun singh dhillon", readings)[0]
     assert not names.match("arjun", readings)[0]
+
+
+def test_mykad_recognised_without_country():
+    front = images.decode(synth.mykad_front("900514-10-5232", NAME, ADDRESS, "PEREMPUAN", synth.face_bgr()))
+    back = images.decode(synth.mykad_back("900514-10-5232"))
+    res = document.analyze(front, back, "national_id", None, {"document_number": "900514105232"},
+                           today=date(2026, 11, 23))
+    assert res.extracted["source"] == "mykad" and _check(res, "document_data")["status"] == "pass"
+
+
+def test_mrz_noise_with_two_lucky_check_digits_is_ignored():
+    from app.pipeline import mrz
+    l1 = "I<OLZJZ<ISHS3ZZZZZ7Z7SES4S9IIBP<BNSO"
+    number = "B0SYS06J<"
+    body = number + mrz.check_digit(number) + "SZZ" + "123456" + "0" + "<" + "300101" + mrz.check_digit("300101") + "5X00C00"
+    composite = mrz.check_digit(body[0:10] + body[13:20] + body[21:35])
+    l2 = body + str((int(composite) + 1) % 10)  # as in the real case: number and expiry pass, the rest fail
+    parsed = mrz.parse_td2(l1, l2)
+    assert parsed["valid_count"] == 2 and not parsed["checks"]["composite"]
+    assert mrz.find_mrz(f"{l1}\n{l2}") is None

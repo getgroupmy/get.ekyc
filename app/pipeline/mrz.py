@@ -170,8 +170,11 @@ def find_mrz(text: str) -> dict | None:
             f = [_fit(x, 30) for x in lines[i:i + 3]]
             if all(f):
                 consider(parse_td1(*f))  # type: ignore[arg-type]
-    # One passing check digit happens by chance in noise (1 in 10); a real MRZ
-    # read even badly passes at least two.
-    if best and best["valid_count"] < 2:
-        return None
+    # OCR noise on a patterned card passes a check digit 1 time in 10, so two
+    # can pass by chance. A real MRZ, even read badly, passes at least three, or
+    # the composite plus one more, and starts with a real document type letter.
+    if best:
+        strong = best["valid_count"] >= 3 or (best["checks"].get("composite") and best["valid_count"] >= 2)
+        if not strong or best["document_code"][:1] not in "PIACV":
+            return None
     return best

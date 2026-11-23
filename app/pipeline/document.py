@@ -100,9 +100,14 @@ def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, coun
     if not ocr.available():
         res.checks.append(check("document_data", REVIEW, "ocr_unavailable"))
     else:
-        is_mykad = country == "MYS" and document_type == "national_id"
         side_texts = [ocr.read_texts(img) for img in sides]
         text = "\n".join(t for texts in side_texts for t in texts)
+        if document_type == "national_id" and country is None:
+            # No country given: a confidently read NRIC number makes it a MyKad.
+            probe = mykad.read_card(side_texts[0], side_texts[1] if len(side_texts) > 1 else None)
+            if probe and probe["confident"]:
+                country = "MYS"
+        is_mykad = country == "MYS" and document_type == "national_id"
         # A MyKad has no machine readable zone: never look for one, or OCR noise
         # on its patterned background can pass for a broken MRZ.
         found_mrz = _read_mrz(sides[::-1]) if document_type in ("passport", "national_id") and not is_mykad else None
