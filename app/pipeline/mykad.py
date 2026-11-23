@@ -38,7 +38,17 @@ _STATE_CODES = {
     "16": "Putrajaya",
     "82": "Unknown state",
 }
-_FOREIGN = {str(n) for n in range(60, 80)} | {"83", "84", "85", "86", "87", "88", "89", "90", "91", "92", "93", "98", "99"}
+# Foreign place-of-birth codes (JPN, jpn.gov.my/en/informasi/kod-negara). Not
+# allocated: 00, 17-20, 69, 70, 73, 80, 81, 94-97.
+_FOREIGN_PLACES = {
+    "60": "Brunei", "61": "Indonesia", "62": "Cambodia", "63": "Laos", "64": "Myanmar", "65": "Philippines",
+    "66": "Singapore", "67": "Thailand", "68": "Vietnam", "71": "Outside Malaysia", "72": "Outside Malaysia",
+    "74": "China", "75": "India", "76": "Pakistan", "77": "Saudi Arabia", "78": "Sri Lanka", "79": "Bangladesh",
+    "83": "Asia-Pacific", "84": "South America", "85": "Africa", "86": "Western Europe", "87": "Britain / Ireland",
+    "88": "Middle East", "89": "Far East", "90": "Caribbean / Central America", "91": "North America",
+    "92": "Eastern Europe", "93": "Other countries", "98": "Stateless", "99": "Refugee / UN / unspecified",
+}
+_FOREIGN = set(_FOREIGN_PLACES)
 
 _PATTERN = re.compile(r"(?<!\d)(\d{6})\s?[-–—]?\s?(\d{2})\s?[-–—]?\s?(\d{4})(?!\d)")
 
@@ -60,7 +70,7 @@ def parse_number(number: str, today: date | None = None) -> dict | None:
     if pb in _STATE_CODES:
         place = _STATE_CODES[pb]
     elif pb in _FOREIGN:
-        place = "Born outside Malaysia"
+        place = _FOREIGN_PLACES[pb]
     else:
         return None
     return {
@@ -262,3 +272,46 @@ def read_card(front_texts: list[str], back_texts: list[str] | None = None) -> di
         "confident": top >= 2 and top >= 2 * runner_up,
         "candidates": [n for n, _ in votes.most_common(4)],
     }
+
+
+# --- which card of the JPN family ----------------------------------------------------
+# Wording first; card colour as a fallback (MyKad blue, MyPR red, MyKAS green,
+# MyKid pink, MyTentera silver).
+FAMILY = {
+    "MyKad": {"holder": "citizen"},
+    "MyPR": {"holder": "permanent_resident"},
+    "MyKAS": {"holder": "temporary_resident"},
+    "MyKid": {"holder": "citizen_child"},
+    "MyTentera": {"holder": "citizen_armed_forces"},
+}
+
+
+def family_by_wording(texts: list[str]) -> str | None:
+    flat = " ".join(" ".join(t.upper().split()) for t in texts)
+    if re.search(r"PEMASTAUTIN\s+TETAP|MYPR\b", flat):
+        return "MyPR"
+    if re.search(r"PEMASTAUTIN\s+SEMENTARA|MYKAS\b", flat):
+        return "MyKAS"
+    if re.search(r"MYKID\b|KANAK[\s-]*KANAK", flat):
+        return "MyKid"
+    if re.search(r"MYTENTERA\b|ANGKATAN\s+TENTERA|TENTERA", flat):
+        return "MyTentera"
+    return None
+
+
+def family_by_colour(img) -> str | None:  # noqa: ANN001 - BGR image
+    """The card's dominant colour among clearly coloured pixels."""
+    import cv2
+    import numpy as np
+
+    hsv = cv2.cvtColor(cv2.resize(img, (320, int(320 * img.shape[0] / img.shape[1]))), cv2.COLOR_BGR2HSV)
+    h, sat, val = hsv[..., 0].ravel(), hsv[..., 1].ravel(), hsv[..., 2].ravel()
+    coloured = (sat > 45) & (val > 90)
+    if coloured.mean() < 0.15:
+        grey = (sat < 30) & (val > 120)
+        return "MyTentera" if grey.mean() > 0.6 else None
+    hist = np.bincount(h[coloured], minlength=180)
+    bands = {"MyPR": hist[:8].sum() + hist[172:].sum(), "MyKid": hist[140:172].sum(),
+             "MyKAS": hist[38:80].sum(), "MyKad": hist[80:130].sum()}
+    best = max(bands, key=bands.get)
+    return best if bands[best] > 0.45 * coloured.sum() else None

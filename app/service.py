@@ -22,14 +22,18 @@ _process_lock = threading.Lock()  # one verification at a time: small boxes, big
 
 
 def required_media(v: Verification) -> list[str]:
-    kinds = ["document_front", "selfie"]
+    from .pipeline.catalog import TYPES
+    meta = TYPES.get(v.document_type)
+    # auto: the selfie is optional when uploading; identity documents without one go to review
+    kinds = ["document_front"] + (["selfie"] if meta and meta.needs_selfie else [])
     if v.require_liveness and v.liveness_challenge:
         kinds += [f"liveness_{i + 1}" for i in range(len(v.liveness_challenge))]
     return kinds
 
 
 def allowed_media(v: Verification) -> list[str]:
-    return required_media(v) + ["document_back"]
+    extra = ["document_back"] + ([] if "selfie" in required_media(v) else ["selfie"])
+    return required_media(v) + extra
 
 
 def purge_media(db: Session, v: Verification) -> None:

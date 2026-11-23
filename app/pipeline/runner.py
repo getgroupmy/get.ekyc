@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from ..config import get_settings
-from . import document, images, liveness
+from . import catalog, document, images, liveness
 from . import face as facelib
 from .checks import FAIL, PASS, REVIEW, SKIPPED, check, overall
 
@@ -32,15 +32,20 @@ def run(media: dict[str, bytes], document_type: str, country: str | None, claime
         return images.decode(media[kind]) if kind in media else None
 
     front, back, selfie = img("document_front"), img("document_back"), img("selfie")
-    assert front is not None and selfie is not None
+    assert front is not None
 
     doc = document.analyze(front, back, document_type, country, claimed)
     checks += doc.checks
+    meta = catalog.TYPES.get(doc.extracted.get("document_type", document_type))
+    needs_selfie = bool(meta and meta.needs_selfie)
 
     # selfie ------------------------------------------------------------------
     selfie_emb = None
-    faces = facelib.detect(selfie)
-    if not faces:
+    faces = facelib.detect(selfie) if selfie is not None else []
+    if selfie is None:
+        if needs_selfie:
+            checks.append(check("selfie_quality", REVIEW, "selfie_missing"))
+    elif not faces:
         checks.append(check("selfie_quality", FAIL, "selfie_no_face"))
     else:
         main = faces[0]
@@ -69,7 +74,7 @@ def run(media: dict[str, bytes], document_type: str, country: str | None, claime
             checks.append(check("face_match", REVIEW, "face_match_uncertain", **detail))
         else:
             checks.append(check("face_match", FAIL, "face_mismatch", **detail))
-    else:
+    elif needs_selfie or selfie is not None:
         checks.append(check("face_match", SKIPPED, "face_missing"))
 
     # liveness --------------------------------------------------------------------

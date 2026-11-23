@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field, HttpUrl
 from .db import Verification
 from .reasons import describe
 
-DocumentType = Literal["auto", "passport", "national_id", "driving_licence"]
+from .pipeline.catalog import TYPES as _TYPES
+
+DocumentType = Literal[("auto",) + tuple(_TYPES)]  # type: ignore[valid-type]
 
 
 class Claimed(BaseModel):
@@ -17,6 +19,7 @@ class Claimed(BaseModel):
     document_number: str | None = Field(default=None, max_length=60)
     date_of_birth: date | None = None
     address: str | None = Field(default=None, max_length=300, description="Checked against the MyKad address")
+    plate: str | None = Field(default=None, max_length=20, description="Vehicle registration number, for vehicle documents")
 
 
 class CreateVerification(BaseModel):

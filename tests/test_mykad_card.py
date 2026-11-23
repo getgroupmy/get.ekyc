@@ -29,7 +29,7 @@ def test_reads_number_name_address_and_cross_checks():
     res = _read(claimed={"full_name": "Anna binti Erik", "document_number": "900514105232",
                          "address": "12 Jalan Mawar 3, Taman Mawar, 43000 Kajang, Selangor"})
     ex = res.extracted
-    assert ex["document_number"] == "900514-10-5232" and ex["date_of_birth"] == "1990-05-14"
+    assert ex["id_number"] == "900514-10-5232" and ex["date_of_birth"] == "1990-05-14"
     assert ex["sex"] == "F" and ex["place_of_birth"] == "Selangor" and ex["citizenship"] == "citizen"
     assert ex["full_name"] == "ANNA BINTI ERIK"
     assert ex["postcode"] == "43000" and ex["state"] == "SELANGOR" and ex["city"] == "KAJANG"

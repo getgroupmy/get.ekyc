@@ -93,6 +93,17 @@ def _norm_id(s: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", (s or "").upper())
 
 
+def _read_value(o: "Outcome", name: str) -> str | None:
+    """labels.csv has one document_number column: it may hold the person's ID
+    number or the document's own number, so either reading counts."""
+    if name != "document_number":
+        return o.extracted.get(name)
+    for key in ("document_number", "id_number"):
+        if o.extracted.get(key) and field_correct(name, o.case.truth[name], o.extracted[key]):
+            return o.extracted[key]
+    return o.extracted.get("id_number") or o.extracted.get("document_number")
+
+
 def field_correct(name: str, truth: str, read: str | None) -> bool | None:
     """None when the engine did not read the field at all."""
     if not read:
@@ -247,7 +258,7 @@ def report(outs: list[Outcome], show_values: bool) -> str:
     for dt in DOC_TYPES:
         sub = [o for o in outs if o.case.document_type == dt]
         for f in FIELDS:
-            vals = [field_correct(f, o.case.truth[f], o.extracted.get(f)) for o in sub if f in o.case.truth]
+            vals = [field_correct(f, o.case.truth[f], _read_value(o, f)) for o in sub if f in o.case.truth]
             if not vals:
                 continue
             ok, wrong, none = vals.count(True), vals.count(False), vals.count(None)
@@ -333,10 +344,10 @@ def write_results(outs: list[Outcome], path: Path, show_values: bool) -> None:
                    "face_score": "" if o.face_score is None else o.face_score, "seconds": f"{o.seconds:.2f}",
                    "error": o.error or ""}
             for f in FIELDS:
-                c = field_correct(f, o.case.truth[f], o.extracted.get(f)) if f in o.case.truth else ""
+                c = field_correct(f, o.case.truth[f], _read_value(o, f)) if f in o.case.truth else ""
                 row[f"{f}_correct"] = "not_read" if c is None else c
                 if show_values:
-                    row[f"{f}_read"] = o.extracted.get(f, "")
+                    row[f"{f}_read"] = _read_value(o, f) or ""
             w.writerow(row)
 
 

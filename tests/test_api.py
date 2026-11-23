@@ -147,7 +147,7 @@ def test_driving_licence_without_claims_goes_to_review(client, api_key, need_mod
     card = synth.card_image(synth.face_bgr(), ["DRIVING LICENCE", "CLASS D", "VALID"])
     v = _run(client, api_key, {"document_type": "driving_licence"},
              {"document_front": card, "selfie": synth.jpeg(synth.selfie())})
-    assert v["status"] == "review" and "no_machine_readable_data" in v["reasons"]
+    assert v["status"] == "review" and "document_fields_missing" in v["reasons"]
     assert _checks(v)["face_match"]["status"] == "pass"
 
 

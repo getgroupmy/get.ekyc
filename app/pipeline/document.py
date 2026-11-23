@@ -11,6 +11,7 @@ from rapidfuzz import fuzz
 
 from ..config import get_settings
 from . import face as facelib
+from . import catalog, fields, idnumbers
 from . import country as countrylib
 from . import images, mrz, mykad, names, ocr
 from .checks import FAIL, PASS, REVIEW, SKIPPED, check
@@ -67,21 +68,30 @@ def _read_mrz(imgs: list[np.ndarray]) -> dict | None:
     return best
 
 
-_LICENCE_WORDS = ("LESEN MEMANDU", "DRIVING LICENCE", "DRIVING LICENSE", "DRIVER LICENSE", "DRIVER'S LICENSE",
-                  "PERMIS DE CONDUIRE", "FUHRERSCHEIN", "SURAT IZIN MENGEMUDI")
-
-
 def _detect_type(sides: list[np.ndarray], texts: list[str]) -> tuple[str, str, dict | None]:
     """(document type, how it was decided, the MRZ if one was read).
-    An MRZ names the type outright (P = passport; I, A, C = identity card);
-    otherwise the printed wording; otherwise an identity card is assumed."""
+    An MRZ names the type outright; otherwise the printed wording of driver and
+    vehicle documents; otherwise an identity card is assumed."""
     found = _read_mrz(sides[::-1])
     if found:
-        return ("passport" if found["document_code"].startswith("P") else "national_id"), "mrz", found
-    flat = " ".join(" ".join(t.upper().split()) for t in texts)
-    if any(w in flat for w in _LICENCE_WORDS):
-        return "driving_licence", "wording", None
+        return catalog.by_mrz(found["document_code"]), "mrz", found
+    by_words = catalog.by_wording(texts)
+    if by_words:
+        return by_words, "wording", None
     return "national_id", "default", None
+
+
+def _mrz_fields(found: dict) -> dict:
+    out = {k: found.get(k) for k in ("document_number", "surname", "given_names", "date_of_birth", "expiry_date",
+                                     "sex", "nationality", "issuing_country", "personal_number")}
+    out["full_name"] = " ".join(x for x in (found["given_names"], found["surname"]) if x)
+    out["source"] = "mrz"
+    # A Malaysian passport carries the holder's NRIC in the personal-number field.
+    if found.get("issuing_country") == "MYS" and found.get("personal_number"):
+        nric = mykad.parse_number(found["personal_number"])
+        if nric:
+            out["id_number"] = nric["document_number"]
+    return out
 
 
 def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, country: str | None,
@@ -91,6 +101,7 @@ def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, coun
     claimed = claimed or {}
     res = DocumentResult()
     country = (country or "").upper() or None
+    requested_country, requested_type = country, document_type
 
     # 1. capture quality -----------------------------------------------------
     q = images.quality(front)
@@ -101,132 +112,236 @@ def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, coun
     else:
         res.checks.append(check("document_quality", PASS, **q))
 
-    # 2. portrait on the document --------------------------------------------
+    # 2. find the portrait (also turns the page upright) ----------------------
     front, doc_face = _find_portrait(front)
-    if doc_face is None:
-        res.checks.append(check("document_portrait", FAIL, "document_face_not_found"))
+    sides = [front] + ([back] if back is not None else [])
+
+    if not ocr.available():
+        res.checks.append(check("document_data", REVIEW, "ocr_unavailable"))
+        _portrait_check(res, front, doc_face, required=True)
+        res.extracted = {}
+        res.document_number = claimed.get("document_number")
+        _common_checks(res, {}, claimed, "", False, today, s)
+        return res
+
+    side_texts = [ocr.read_texts(img) for img in sides]
+    all_texts = [t for texts in side_texts for t in texts]
+    text = "\n".join(all_texts)
+
+    # 3. what is it -------------------------------------------------------------
+    found_mrz = None
+    if document_type == "auto":
+        document_type, type_source, found_mrz = _detect_type(sides, all_texts)
     else:
+        type_source = "requested"
+        detected = catalog.by_wording(all_texts)
+        if detected and catalog.TYPES[detected].category != catalog.TYPES.get(document_type, catalog.TYPES["national_id"]).category:
+            res.checks.append(check("document_type", REVIEW, "document_type_mismatch",
+                                    requested=document_type, detected=detected))
+    meta = catalog.TYPES.get(document_type, catalog.TYPES["national_id"])
+    extracted: dict = {"document_type": document_type, "document_type_source": type_source,
+                       "document_category": meta.category}
+    definitive = False
+    _portrait_check(res, front, doc_face, required=meta.has_portrait and document_type != "visa")
+
+    # 4. read it ----------------------------------------------------------------
+    if meta.category in ("driver", "vehicle"):
+        read = catalog.read(document_type, all_texts, today)
+        extracted.update(read)
+        missing = [f for f in catalog.REQUIRED.get(document_type, ()) if f not in read]
+        detail = {"read": sorted(read)}
+        if missing:
+            res.checks.append(check("document_data", REVIEW, "document_fields_missing", missing=missing, **detail))
+        else:
+            res.checks.append(check("document_data", PASS, **detail))
+        _vehicle_rules(res, document_type, read)
+        if read.get("id_number"):
+            nric = mykad.parse_number(read["id_number"])
+            if nric:
+                extracted["id_number"] = nric["document_number"]
+                extracted.setdefault("date_of_birth", nric["date_of_birth"])
+                definitive = True
+    elif document_type in ("refugee_card", "foreign_worker_card"):
+        pattern = r"(?<!\d)\d{3}-\d{2}[A-Z]?-?\d{5,7}(?!\d)" if document_type == "refugee_card" else r"\b[A-Z]{1,2}\d{6,9}\b"
+        m = re.search(pattern, text.upper())
+        if m:
+            extracted["document_number"] = m.group()
+            res.checks.append(check("document_data", PASS, id_format=meta.name))
+        else:
+            res.checks.append(check("document_data", REVIEW, "id_number_not_found"))
+        extracted.update(_dates_on_card(text, today))
+    else:
+        definitive = _read_identity(res, extracted, sides, side_texts, all_texts, text, document_type, country,
+                                    found_mrz, front)
+    country = extracted.get("country") or country
+
+    # 5. which country -----------------------------------------------------------
+    found = countrylib.detect(all_texts, mrz_country=extracted.get("issuing_country") if extracted.get("source") == "mrz" else None,
+                              mykad_confident=extracted.get("source") == "mykad" and definitive)
+    if not found["country"] and extracted.get("country_source") == "id_number":
+        found = {"country": extracted["country"], "source": "id_number"}
+    if found["country"]:
+        extracted["country"] = found["country"]
+        extracted["country_source"] = found["source"]
+        if requested_country and requested_country != found["country"]:
+            res.checks.append(check("document_country", REVIEW, "issuing_country_mismatch",
+                                    requested=requested_country, detected=found["country"], source=found["source"]))
+        else:
+            res.checks.append(check("document_country", PASS, detected=found["country"], source=found["source"]))
+    else:
+        res.checks.append(check("document_country", SKIPPED, "country_not_identified", requested=requested_country))
+
+    res.extracted = extracted
+    # the number duplicates are keyed on: the person's ID number first
+    res.document_number = extracted.get("id_number") or extracted.get("document_number") or claimed.get("document_number")
+    _common_checks(res, extracted, claimed, text, definitive, today, s)
+    return res
+
+
+def _portrait_check(res: DocumentResult, front: np.ndarray, doc_face, required: bool) -> None:  # noqa: ANN001
+    if doc_face is not None:
         res.face_embedding = facelib.embed(front, doc_face)
         res.checks.append(check("document_portrait", PASS, face_width_px=doc_face.box[2],
                                 detector_score=round(doc_face.score, 3)))
+    elif required:
+        res.checks.append(check("document_portrait", FAIL, "document_face_not_found"))
 
-    # 3. data extraction ------------------------------------------------------
-    sides = [front] + ([back] if back is not None else [])
-    text = ""
-    definitive = False  # extracted data backed by check digits / a validated ID number
-    extracted: dict = {}
-    if not ocr.available():
-        res.checks.append(check("document_data", REVIEW, "ocr_unavailable"))
+
+def _issue_date(text: str, extracted: dict) -> str | None:
+    """Date of issue on a passport data page: the latest printed date that is
+    after the date of birth and not after today (the MRZ itself has none)."""
+    dob = extracted.get("date_of_birth")
+    exp = extracted.get("expiry_date")
+    ds = [d for d in fields.dates(text) if d <= date.today() and (not dob or d.isoformat() > dob)
+          and (not exp or d.isoformat() != exp)]
+    return max(ds).isoformat() if ds else None
+
+
+def _dates_on_card(text: str, today: date) -> dict:
+    return fields.validity(text, today)
+
+
+def _vehicle_rules(res: DocumentResult, document_type: str, read: dict) -> None:
+    """Rules from APAD / PUSPAKOM practice that hold for every service."""
+    if document_type == "vehicle_inspection" and read.get("result") == "fail":
+        res.checks.append(check("inspection_result", FAIL, "inspection_failed"))
+    elif document_type == "vehicle_inspection" and read.get("result") == "pass":
+        res.checks.append(check("inspection_result", PASS))
+    if document_type == "vehicle_registration" and read.get("vehicle_age_years") is not None:
+        age = read["vehicle_age_years"]
+        res.checks.append(check("vehicle_age", REVIEW if age > 15 else PASS, "vehicle_over_15_years",
+                                age_years=age, limit=15))
+
+
+def _read_identity(res: DocumentResult, extracted: dict, sides, side_texts, all_texts, text, document_type,  # noqa: ANN001, PLR0913
+                   country, found_mrz, front) -> bool:
+    """Passports, visas, residence permits and national identity cards. Returns
+    whether the data is backed by check digits or a validated number."""
+    definitive = False
+    if country is None and document_type != "passport" and not found_mrz:
+        country = countrylib.from_wording(all_texts)[0]
+        if country is None:
+            probe = mykad.read_card(side_texts[0], side_texts[1] if len(side_texts) > 1 else None)
+            if probe and probe["confident"]:
+                country = "MYS"
+    is_mykad = country == "MYS" and document_type == "national_id"
+    if found_mrz is None and not is_mykad and document_type in ("passport", "national_id", "visa", "residence_permit"):
+        found_mrz = _read_mrz(sides[::-1])
+    card = (mykad.read_card(side_texts[0], side_texts[1] if len(side_texts) > 1 else None)
+            if country == "MYS" and document_type == "national_id" else None)
+    foreign = (idnumbers.read(all_texts, country) if document_type == "national_id" and not card and not found_mrz
+               and country != "MYS" else None)
+
+    if card:
+        extracted.update({k: card[k] for k in ("full_name", "date_of_birth", "sex", "place_of_birth", "citizenship",
+                                               "address", "postcode", "city", "state") if card.get(k)})
+        extracted["id_number"] = card["document_number"]
+        serial = re.search(r"\bSN\s*[:.]?\s*([A-Z0-9]{8,12})\b", text.upper())
+        if serial:
+            extracted["document_number"] = serial.group(1)  # the card's own serial, printed on the back
+        family = mykad.family_by_wording(all_texts) or mykad.family_by_colour(front) or "MyKad"
+        extracted["document_subtype"] = family
+        extracted["holder"] = mykad.FAMILY[family]["holder"]
+        extracted["source"] = "mykad"
+        detail = {"id_format": family, "votes": card["votes"]}
+        definitive = card["confident"]
+        if card["front_number"] and card["back_number"] and card["front_number"] != card["back_number"]:
+            res.checks.append(check("document_data", REVIEW, "id_number_front_back_mismatch", **detail))
+        elif not card["confident"]:
+            res.checks.append(check("document_data", REVIEW, "id_number_uncertain", **detail))
+        elif card["printed_sex"] and card["printed_sex"] != card["sex"]:
+            res.checks.append(check("document_data", REVIEW, "gender_mismatch", printed=card["printed_sex"],
+                                    from_number=card["sex"], **detail))
+        else:
+            res.checks.append(check("document_data", PASS, **detail))
+        if family == "MyKAS":
+            extracted.update(_dates_on_card(text, date.today()))
+        res.candidates = card["candidates"]
+        res.name_readings = card["name_readings"]
+    elif is_mykad:
+        res.checks.append(check("document_data", FAIL, "id_number_not_found"))
+    elif found_mrz:
+        extracted.update(_mrz_fields(found_mrz))
+        issued = _issue_date(text, extracted)
+        if issued:
+            extracted["start_date"] = issued
+        detail = {"mrz_format": found_mrz["format"], "document_code": found_mrz["document_code"],
+                  "check_digits": found_mrz["checks"]}
+        if not found_mrz["valid"]:
+            res.checks.append(check("document_data", REVIEW, "mrz_checksum_failed", **detail))
+        elif document_type == "passport" and not found_mrz["document_code"].startswith("P"):
+            res.checks.append(check("document_data", REVIEW, "document_type_mismatch", **detail))
+        else:
+            definitive = True
+            res.checks.append(check("document_data", PASS, **detail))
+    elif foreign:
+        extracted.update({k: v for k, v in foreign.items()
+                          if k in ("date_of_birth", "sex", "holder", "birth_year")})
+        extracted["id_number"] = foreign["number"]
+        extracted["document_subtype"] = foreign["id_format"]
+        extracted["source"] = "id_number"
+        if not country:
+            extracted["country"], extracted["country_source"] = foreign["country"], "id_number"
+        detail = {"id_format": foreign["id_format"], "checksum": foreign["checksum"],
+                  "valid_checksum": foreign["valid_checksum"], "votes": foreign["votes"]}
+        res.candidates = foreign["candidates"]
+        if foreign["checksum"] == "hard" and not foreign["valid_checksum"]:
+            res.checks.append(check("document_data", REVIEW, "id_number_checksum_failed", **detail))
+        elif foreign["checksum"] == "none" and not foreign["confident"]:
+            res.checks.append(check("document_data", REVIEW, "id_number_uncertain", **detail))
+        else:
+            definitive = foreign["valid_checksum"] or foreign["confident"]
+            res.checks.append(check("document_data", PASS, **detail))
+    elif document_type == "passport":
+        res.checks.append(check("document_data", FAIL, "mrz_not_found"))
     else:
-        side_texts = [ocr.read_texts(img) for img in sides]
-        text = "\n".join(t for texts in side_texts for t in texts)
-        requested = country
-        all_texts = [t for texts in side_texts for t in texts]
-        requested_type = document_type
-        early_mrz = None
-        if document_type == "auto":
-            document_type, type_source, early_mrz = _detect_type(sides, all_texts)
-            extracted_type = {"document_type": document_type, "document_type_source": type_source}
-        else:
-            extracted_type = {"document_type": document_type, "document_type_source": "requested"}
-        if country is None and document_type != "passport":
-            # No country given: printed wording, or a confidently read NRIC
-            # number, decides which reader to use.
-            country = countrylib.from_wording(all_texts)[0]
-            if country is None and document_type == "national_id":
-                probe = mykad.read_card(side_texts[0], side_texts[1] if len(side_texts) > 1 else None)
-                if probe and probe["confident"]:
-                    country = "MYS"
-        is_mykad = country == "MYS" and document_type == "national_id"
-        # A MyKad has no machine readable zone: never look for one, or OCR noise
-        # on its patterned background can pass for a broken MRZ.
-        found_mrz = early_mrz or (_read_mrz(sides[::-1])
-                                  if document_type in ("passport", "national_id") and not is_mykad else None)
-        card = (mykad.read_card(side_texts[0], side_texts[1] if len(side_texts) > 1 else None)
-                if country == "MYS" and document_type != "passport" else None)
+        res.checks.append(check("document_data", REVIEW, "no_machine_readable_data"))
+    return definitive
 
-        if card:
-            extracted = {k: card[k] for k in ("document_number", "full_name", "date_of_birth", "sex",
-                                              "place_of_birth", "citizenship", "address", "postcode",
-                                              "city", "state") if card.get(k)}
-            extracted["source"] = "mykad"
-            detail = {"id_format": "MyKad", "votes": card["votes"]}
-            definitive = card["confident"]
-            if (card["front_number"] and card["back_number"]
-                    and card["front_number"] != card["back_number"]):
-                res.checks.append(check("document_data", REVIEW, "id_number_front_back_mismatch", **detail))
-            elif not card["confident"]:
-                res.checks.append(check("document_data", REVIEW, "id_number_uncertain", **detail))
-            elif card["printed_sex"] and card["printed_sex"] != card["sex"]:
-                res.checks.append(check("document_data", REVIEW, "gender_mismatch", printed=card["printed_sex"],
-                                        from_number=card["sex"], **detail))
-            else:
-                res.checks.append(check("document_data", PASS, **detail))
-            res.candidates = card["candidates"]
-            res.name_readings = card["name_readings"]
-        elif is_mykad:
-            res.checks.append(check("document_data", FAIL, "id_number_not_found"))
-        elif found_mrz:
-            extracted = {k: found_mrz.get(k) for k in (
-                "document_number", "surname", "given_names", "date_of_birth", "expiry_date", "sex",
-                "nationality", "issuing_country", "personal_number")}
-            extracted["full_name"] = " ".join(x for x in (found_mrz["given_names"], found_mrz["surname"]) if x)
-            extracted["source"] = "mrz"
-            detail = {"mrz_format": found_mrz["format"], "check_digits": found_mrz["checks"]}
-            if not found_mrz["valid"]:
-                res.checks.append(check("document_data", REVIEW, "mrz_checksum_failed", **detail))
-            elif document_type == "passport" and not found_mrz["document_code"].startswith("P"):
-                res.checks.append(check("document_data", REVIEW, "document_type_mismatch", **detail))
-            else:
-                definitive = True
-                res.checks.append(check("document_data", PASS, **detail))
-        elif document_type == "passport":
-            res.checks.append(check("document_data", FAIL, "mrz_not_found"))
-        elif claimed.get("document_number") or claimed.get("full_name"):
-            extracted = {"source": "ocr_text"}
-            res.checks.append(check("document_data", PASS, note="verified against claimed data only"))
-        else:
-            res.checks.append(check("document_data", REVIEW, "no_machine_readable_data"))
-        extracted.update(extracted_type)
-        found = countrylib.detect(all_texts, mrz_country=found_mrz["issuing_country"] if found_mrz and found_mrz["valid"] else None,
-                                  mykad_confident=bool(card and card["confident"]))
-        if found["country"]:
-            extracted["country"] = found["country"]
-            extracted["country_source"] = found["source"]
-            if requested and requested != found["country"]:
-                res.checks.append(check("document_country", REVIEW, "issuing_country_mismatch",
-                                        requested=requested, detected=found["country"], source=found["source"]))
-            else:
-                res.checks.append(check("document_country", PASS, detected=found["country"], source=found["source"]))
-        else:
-            res.checks.append(check("document_country", SKIPPED, "country_not_identified",
-                                    requested=requested))
-    res.extracted = extracted
-    res.document_number = extracted.get("document_number") or claimed.get("document_number")
 
-    # 4. expiry ---------------------------------------------------------------
+def _common_checks(res: DocumentResult, extracted: dict, claimed: dict, text: str, definitive: bool,
+                   today: date, s) -> None:  # noqa: ANN001
+    # expiry
     exp = extracted.get("expiry_date")
     if exp:
         expired = date.fromisoformat(exp) < today
         res.checks.append(check("document_expiry", FAIL if expired else PASS, "document_expired", expiry_date=exp))
-    elif extracted.get("source") == "mykad":
+    elif extracted.get("source") == "mykad" and extracted.get("document_subtype") != "MyKAS":
         res.checks.append(check("document_expiry", SKIPPED, "no_expiry_on_document"))
     else:
         res.checks.append(check("document_expiry", SKIPPED, "expiry_not_readable"))
-
-    # 5. age ------------------------------------------------------------------
-    dob = extracted.get("date_of_birth")
-    if dob and s.min_age > 0:
-        age = _age(date.fromisoformat(dob), today)
-        res.checks.append(check("age", PASS if age >= s.min_age else FAIL, "underage", minimum=s.min_age))
-    else:
-        res.checks.append(check("age", SKIPPED, "date_of_birth_not_readable"))
-
-    # 6. claimed data vs document ---------------------------------------------
+    # age (people only)
+    if extracted.get("document_category", "identity") != "vehicle":
+        dob = extracted.get("date_of_birth")
+        if dob and s.min_age > 0:
+            age = _age(date.fromisoformat(dob), today)
+            res.checks.append(check("age", PASS if age >= s.min_age else FAIL, "underage", minimum=s.min_age))
+        else:
+            res.checks.append(check("age", SKIPPED, "date_of_birth_not_readable"))
+    # what the user typed
     if claimed and text:
         res.checks.append(_match_claimed(claimed, extracted, text, definitive, s.name_match_threshold,
                                          res.candidates, res.name_readings))
-    return res
 
 
 def _match_claimed(claimed: dict, extracted: dict, text: str, definitive: bool, name_thr: int,
@@ -255,8 +370,10 @@ def _match_claimed(claimed: dict, extracted: dict, text: str, definitive: bool, 
 
     number = _norm_id(claimed.get("document_number") or "")
     if number:
-        ex = _norm_id(extracted.get("document_number") or "")
-        ok = number == ex if ex else number in _norm_id(flat)
+        # The user may type either the person's ID number or the document's own number.
+        read_numbers = {_norm_id(extracted.get(k) or "") for k in ("id_number", "document_number", "owner_id_number")} - {""}
+        ex = next(iter(read_numbers), "")
+        ok = number in read_numbers if read_numbers else number in _norm_id(flat)
         compared["document_number_match"] = ok
         if not ok:
             # Fail only when the reading was certain and the typed number was not
@@ -274,6 +391,14 @@ def _match_claimed(claimed: dict, extracted: dict, text: str, definitive: bool, 
             compared["postcode_match"] = typed_postcode.group() == extracted["postcode"]
         if score < 70 or compared.get("postcode_match") is False:
             flag(REVIEW, "address_mismatch")
+
+    typed_plate = re.sub(r"\s", "", (claimed.get("plate") or "").upper())
+    if typed_plate:
+        read_plate = extracted.get("plate")
+        ok = read_plate == typed_plate if read_plate else typed_plate in re.sub(r"\s", "", flat)
+        compared["plate_match"] = ok
+        if not ok:
+            flag(REVIEW, "plate_mismatch")
 
     dob = claimed.get("date_of_birth")
     if dob and extracted.get("date_of_birth"):

@@ -35,6 +35,13 @@ MESSAGES = {
     "unreadable_image": "One of the images could not be read. Please retake it.",
     "processing_error": "The verification needs a manual check.",
     "manual_approval_required": "Awaiting manual review.",
+    "selfie_missing": "A selfie is needed for this document.",
+    "document_fields_missing": "Some details could not be read from the document. Retake it flat and in good light.",
+    "document_type_mismatch": "The document does not look like the selected document type.",
+    "inspection_failed": "The vehicle failed its inspection (GAGAL).",
+    "vehicle_over_15_years": "The vehicle is over 15 years old, the e-hailing limit.",
+    "plate_mismatch": "The registration number entered does not match the document.",
+    "id_number_checksum_failed": "The ID number on the card did not pass its check digit.",
     "rejected_by_reviewer": "The verification was rejected after manual review.",
 }
 
