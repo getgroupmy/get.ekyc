@@ -1,0 +1,19 @@
+services:
+  ekyc:
+    build: .
+    image: get-ekyc:latest
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${EKYC_PORT:-8080}:8080"
+    volumes:
+      # Encrypted images + database. On Synology point this at a shared folder,
+      # e.g. /volume1/docker/ekyc:/data
+      - ${EKYC_DATA_PATH:-./data}:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

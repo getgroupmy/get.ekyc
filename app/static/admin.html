@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GET eKYC console</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --ink:#16202c; --mute:#667085; --line:#e3e6eb; --brand:#0b6e4f;
+          --ok:#12805c; --bad:#c0362c; --warn:#b26a00; --info:#3b5bdb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#10151b; --card:#19212b; --ink:#e8edf3; --mute:#93a0b1; --line:#2a3542; --brand:#3ecf9a;
+            --ok:#3ecf9a; --bad:#ff7b72; --warn:#f0b34a; --info:#8da2ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  header { display:flex; gap:16px; align-items:center; padding:12px 20px; background:var(--card); border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0 12px 0 0; }
+  nav { display:flex; gap:4px; }
+  nav button { background:none; border:0; color:var(--mute); padding:8px 12px; border-radius:8px; font:inherit; cursor:pointer; }
+  nav button.on { background:var(--bg); color:var(--ink); font-weight:600; }
+  main { max-width:1180px; margin:0 auto; padding:20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px; }
+  h2 { font-size:15px; margin:0 0 12px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--mute); font-weight:600; }
+  tr.row { cursor:pointer; } tr.row:hover { background:var(--bg); }
+  .pill { display:inline-block; padding:2px 9px; border-radius:99px; font-size:12px; font-weight:600; border:1px solid currentColor; }
+  .approved,.pass { color:var(--ok); } .rejected,.fail { color:var(--bad); } .review { color:var(--warn); }
+  .processing,.created { color:var(--info); } .skipped,.expired,.deleted { color:var(--mute); }
+  input, select, textarea { font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); width:100%; }
+  label { display:block; font-size:12px; color:var(--mute); margin:10px 0 4px; }
+  button.btn { font:inherit; font-weight:600; padding:8px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; }
+  button.primary { background:var(--brand); border-color:var(--brand); color:#fff; }
+  button.danger { color:var(--bad); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
+  .imgs { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; }
+  .imgs figure { margin:0; } .imgs img { width:100%; border-radius:8px; border:1px solid var(--line); display:block; }
+  figcaption, .mute { color:var(--mute); font-size:12px; }
+  .stats { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px; }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 16px; min-width:110px; }
+  .stat b { display:block; font-size:22px; }
+  pre { background:var(--bg); padding:10px; border-radius:8px; overflow:auto; font-size:12.5px; margin:0; white-space:pre-wrap; word-break:break-word; }
+  .bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .secret { font-family:ui-monospace,monospace; word-break:break-all; }
+  .hide { display:none; }
+  dl { display:grid; grid-template-columns:max-content 1fr; gap:4px 16px; margin:0; } dt { color:var(--mute); } dd { margin:0; word-break:break-word; }
+</style>
+</head>
+<body>
+<header>
+  <h1>GET eKYC</h1>
+  <nav id="nav" class="hide">
+    <button data-tab="queue" class="on">Verifications</button>
+    <button data-tab="clients">API clients</button>
+    <button data-tab="try">Try it</button>
+  </nav>
+  <span style="flex:1"></span>
+  <span id="health" class="mute"></span>
+  <button class="btn hide" id="logout">Sign out</button>
+</header>
+<main>
+  <section id="login" class="card" style="max-width:420px;margin:60px auto">
+    <h2>Sign in</h2>
+    <label for="token">Admin token (EKYC_ADMIN_TOKEN)</label>
+    <input id="token" type="password" autocomplete="current-password">
+    <p id="loginErr" class="rejected"></p>
+    <button class="btn primary" id="loginBtn">Continue</button>
+  </section>
+
+  <section id="queue" class="hide">
+    <div class="stats" id="stats"></div>
+    <div class="card">
+      <div class="bar" style="margin-bottom:10px">
+        <h2 style="margin:0;flex:1">Verifications</h2>
+        <select id="filter" style="width:auto">
+          <option value="review">Needs review</option><option value="">All</option>
+          <option value="approved">Approved</option><option value="rejected">Rejected</option>
+          <option value="processing">Processing</option><option value="created">Created</option>
+        </select>
+        <button class="btn" id="refresh">Refresh</button>
+      </div>
+      <table><thead><tr><th>Created</th><th>Client</th><th>User ref</th><th>Document</th><th>Status</th><th>Reasons</th></tr></thead>
+      <tbody id="rows"></tbody></table>
+      <p id="empty" class="mute hide">Nothing here.</p>
+    </div>
+    <div id="detail"></div>
+  </section>
+
+  <section id="clients" class="hide">
+    <div class="card">
+      <h2>New API client</h2>
+      <div class="grid">
+        <div><label for="cname">App name</label><input id="cname" placeholder="get-ride"></div>
+        <div><label for="chook">Webhook URL (optional)</label><input id="chook" placeholder="https://api.example.com/hooks/ekyc"></div>
+      </div>
+      <p><button class="btn primary" id="cadd">Create client</button></p>
+      <div id="cnew"></div>
+    </div>
+    <div class="card"><h2>Clients</h2>
+      <table><thead><tr><th>Name</th><th>Key</th><th>Webhook</th><th>Status</th><th></th></tr></thead><tbody id="crows"></tbody></table>
+    </div>
+  </section>
+
+  <section id="try" class="hide">
+    <div class="card">
+      <h2>Run a test verification</h2>
+      <p class="mute">Uses the public API exactly as your app would. Liveness is skipped here because it needs a live camera sequence.</p>
+      <div class="grid">
+        <div><label for="tkey">API key</label><input id="tkey" type="password" placeholder="ek_..."></div>
+        <div><label for="ttype">Document type</label><select id="ttype"><option value="passport">Passport</option><option value="national_id">National ID</option><option value="driving_licence">Driving licence</option></select></div>
+        <div><label for="tcountry">Country (ISO alpha-3, optional)</label><input id="tcountry" placeholder="MYS" maxlength="3"></div>
+        <div><label for="tname">Full name (optional)</label><input id="tname"></div>
+        <div><label for="tnum">Document number (optional)</label><input id="tnum"></div>
+        <div><label for="tfront">Document front</label><input id="tfront" type="file" accept="image/*"></div>
+        <div><label for="tback">Document back (optional)</label><input id="tback" type="file" accept="image/*"></div>
+        <div><label for="tselfie">Selfie</label><input id="tselfie" type="file" accept="image/*"></div>
+      </div>
+      <p><button class="btn primary" id="trun">Verify</button> <span id="tstate" class="mute"></span></p>
+      <pre id="tout" class="hide"></pre>
+    </div>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const h = (tag, attrs = {}, ...kids) => {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) k === "class" ? e.className = v : k.startsWith("on") ? e.addEventListener(k.slice(2), v) : e.setAttribute(k, v);
+  for (const k of kids.flat()) e.append(k instanceof Node ? k : document.createTextNode(k ?? ""));
+  return e;
+};
+let token = sessionStorage.getItem("ekyc_admin") || "";
+const api = async (path, opts = {}) => {
+  const r = await fetch("/admin/api" + path, { ...opts, headers: { "X-Admin-Token": token, ...(opts.body ? { "Content-Type": "application/json" } : {}) } });
+  if (r.status === 401) { signOut(); throw new Error("unauthorised"); }
+  if (!r.ok) throw new Error((await r.text()) || r.statusText);
+  return r.status === 204 ? null : r;
+};
+const json = async (path, opts) => (await api(path, opts)).json();
+const pill = s => h("span", { class: "pill " + s }, s);
+const when = t => t ? new Date(t).toLocaleString() : "";
+
+function signOut() { token = ""; sessionStorage.removeItem("ekyc_admin"); show(false); }
+function show(authed) {
+  $("login").classList.toggle("hide", authed);
+  for (const id of ["nav", "logout"]) $(id).classList.toggle("hide", !authed);
+  for (const id of ["queue", "clients", "try"]) $(id).classList.add("hide");
+  if (authed) tab("queue");
+}
+function tab(name) {
+  for (const b of $("nav").children) b.classList.toggle("on", b.dataset.tab === name);
+  for (const id of ["queue", "clients", "try"]) $(id).classList.toggle("hide", id !== name);
+  if (name === "queue") loadQueue();
+  if (name === "clients") loadClients();
+}
+$("nav").addEventListener("click", e => e.target.dataset.tab && tab(e.target.dataset.tab));
+$("logout").onclick = signOut;
+$("loginBtn").onclick = async () => {
+  token = $("token").value.trim();
+  try { await json("/stats"); sessionStorage.setItem("ekyc_admin", token); $("loginErr").textContent = ""; show(true); }
+  catch { $("loginErr").textContent = "That token was not accepted."; }
+};
+$("token").addEventListener("keydown", e => e.key === "Enter" && $("loginBtn").click());
+
+async function loadQueue() {
+  const [stats, list] = await Promise.all([json("/stats"), json("/verifications" + ($("filter").value ? "?status=" + $("filter").value : ""))]);
+  $("stats").replaceChildren(...["review", "approved", "rejected", "processing", "created"].map(s =>
+    h("div", { class: "stat" }, h("b", { class: s }, String(stats.by_status[s] || 0)), s)));
+  $("rows").replaceChildren(...list.items.map(v => h("tr", { class: "row", onclick: () => openDetail(v.id) },
+    h("td", {}, when(v.created_at)), h("td", {}, v.client), h("td", {}, v.external_ref || "—"),
+    h("td", {}, v.document_type + (v.country ? " · " + v.country : "")), h("td", {}, pill(v.status)),
+    h("td", { class: "mute" }, (v.reasons || []).join(", ")))));
+  $("empty").classList.toggle("hide", list.items.length > 0);
+}
+$("filter").onchange = loadQueue; $("refresh").onclick = loadQueue;
+
+async function openDetail(id) {
+  const v = await json("/verifications/" + id);
+  const imgs = h("div", { class: "imgs" });
+  for (const m of v.media) {
+    const img = h("img", { alt: m.kind });
+    imgs.append(h("figure", {}, img, h("figcaption", {}, m.kind)));
+    api("/media/" + m.id).then(r => r.blob()).then(b => img.src = URL.createObjectURL(b)).catch(() => {});
+  }
+  const ex = (v.result && v.result.extracted) || {};
+  const dl = obj => h("dl", {}, Object.entries(obj).filter(([, x]) => x != null).flatMap(([k, x]) => [h("dt", {}, k), h("dd", {}, String(x))]));
+  const checks = h("table", {}, h("tbody", {}, ((v.result && v.result.checks) || []).map(c => h("tr", {},
+    h("td", {}, c.name), h("td", {}, pill(c.status)), h("td", {}, c.code || ""), h("td", { class: "mute" }, JSON.stringify(c.detail))))));
+  const note = h("textarea", { rows: "2", placeholder: "Review note (optional)" });
+  const decide = d => async () => { await json(`/verifications/${id}/decision`, { method: "POST", body: JSON.stringify({ decision: d, note: note.value || null }) }); await loadQueue(); openDetail(id); };
+  const canDecide = ["review", "approved", "rejected"].includes(v.status);
+  $("detail").replaceChildren(h("div", { class: "card" },
+    h("div", { class: "bar" }, h("h2", { style: "margin:0;flex:1" }, v.id), pill(v.status)),
+    h("p", { class: "mute" }, `${v.client} · ${v.external_ref || "no user ref"} · decided by ${v.decided_by || "—"} · ${when(v.completed_at)}`),
+    v.media.length ? imgs : h("p", { class: "mute" }, "Images have been removed."),
+    h("div", { class: "grid", style: "margin-top:16px" },
+      h("div", {}, h("h2", {}, "Read from document"), dl(ex)),
+      h("div", {}, h("h2", {}, "Entered by user"), dl(v.claimed || {})),
+      h("div", {}, h("h2", {}, "Scores"), dl((v.result && v.result.scores) || {}))),
+    h("h2", { style: "margin-top:16px" }, "Checks"), checks,
+    v.review_note ? h("p", {}, "Note: " + v.review_note) : "",
+    canDecide ? h("div", { style: "margin-top:16px" }, note, h("div", { class: "bar", style: "margin-top:8px" },
+      h("button", { class: "btn primary", onclick: decide("approved") }, "Approve"),
+      h("button", { class: "btn danger", onclick: decide("rejected") }, "Reject"),
+      h("span", { style: "flex:1" }),
+      h("button", { class: "btn danger", onclick: async () => { if (confirm("Permanently erase the images and personal data for this verification?")) { await api("/verifications/" + id, { method: "DELETE" }); $("detail").replaceChildren(); loadQueue(); } } }, "Erase data"))) : "",
+    h("h2", { style: "margin-top:16px" }, "Audit trail"),
+    h("pre", {}, v.audit.map(a => `${when(a.at)}  ${a.actor}  ${a.action}  ${a.detail || ""}`).join("\n"))));
+  $("detail").scrollIntoView({ behavior: "smooth" });
+}
+
+async function loadClients() {
+  const list = await json("/clients");
+  $("crows").replaceChildren(...list.items.map(c => h("tr", {},
+    h("td", {}, c.name), h("td", { class: "secret" }, c.key_prefix + "…"), h("td", {}, c.webhook_url || "—"),
+    h("td", {}, h("span", { class: "pill " + (c.active ? "approved" : "rejected") }, c.active ? "active" : "revoked")),
+    h("td", {}, c.active ? h("button", { class: "btn danger", onclick: async () => { if (confirm(`Revoke the key for ${c.name}?`)) { await api("/clients/" + c.id, { method: "DELETE" }); loadClients(); } } }, "Revoke") : ""))));
+}
+$("cadd").onclick = async () => {
+  const body = { name: $("cname").value.trim(), webhook_url: $("chook").value.trim() || null };
+  if (!body.name) return;
+  try {
+    const c = await json("/clients", { method: "POST", body: JSON.stringify(body) });
+    $("cnew").replaceChildren(h("div", { class: "card" }, h("b", {}, "Copy these now — they are not shown again."),
+      h("dl", { style: "margin-top:8px" }, h("dt", {}, "API key"), h("dd", { class: "secret" }, c.api_key),
+        ...(c.webhook_secret ? [h("dt", {}, "Webhook secret"), h("dd", { class: "secret" }, c.webhook_secret)] : []))));
+    $("tkey").value = c.api_key; $("cname").value = $("chook").value = ""; loadClients();
+  } catch (e) { $("cnew").replaceChildren(h("p", { class: "rejected" }, e.message)); }
+};
+
+$("trun").onclick = async () => {
+  const key = { "X-API-Key": $("tkey").value.trim() }, say = t => $("tstate").textContent = t;
+  const call = async (path, opts = {}) => { const r = await fetch("/v1/verifications" + path, { ...opts, headers: { ...key, ...(opts.headers || {}) } }); const j = await r.json(); if (!r.ok) throw new Error(JSON.stringify(j.detail || j)); return j; };
+  $("tout").classList.add("hide");
+  try {
+    const claimed = {}; if ($("tname").value) claimed.full_name = $("tname").value; if ($("tnum").value) claimed.document_number = $("tnum").value;
+    say("Creating…");
+    const v = await call("", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      document_type: $("ttype").value, country: $("tcountry").value.trim() || null, external_ref: "console-test",
+      claimed: Object.keys(claimed).length ? claimed : null, require_liveness: false }) });
+    for (const [kind, el] of [["document_front", "tfront"], ["document_back", "tback"], ["selfie", "tselfie"]]) {
+      const f = $(el).files[0]; if (!f) continue;
+      say("Uploading " + kind + "…"); const fd = new FormData(); fd.append("file", f);
+      await call(`/${v.id}/media/${kind}`, { method: "PUT", body: fd });
+    }
+    say("Verifying…"); await call(`/${v.id}/submit`, { method: "POST" });
+    let out; do { await new Promise(r => setTimeout(r, 1000)); out = await call("/" + v.id); } while (out.status === "processing");
+    say("Result: " + out.status); $("tout").textContent = JSON.stringify(out, null, 2); $("tout").classList.remove("hide");
+  } catch (e) { say("Failed: " + e.message); }
+};
+
+fetch("/health").then(r => r.json()).then(s => $("health").textContent =
+  s.status === "ok" ? "engine ready" + (s.passive_liveness ? " · passive liveness on" : "") : "engine degraded — check models");
+if (token) json("/stats").then(() => show(true)).catch(() => {});
+</script>
+</body>
+</html>

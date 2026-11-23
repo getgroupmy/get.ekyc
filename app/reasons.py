@@ -1,0 +1,38 @@
+"""Reason codes -> short messages an app can show the user (or a reviewer)."""
+MESSAGES = {
+    "document_resolution_too_low": "The document photo is too small. Move closer and retake it.",
+    "document_blurry": "The document photo is blurry. Hold steady and retake it.",
+    "document_face_not_found": "We could not find the photo on the document. Capture the full photo page.",
+    "mrz_not_found": "We could not read the two lines at the bottom of the passport page. Retake without glare.",
+    "mrz_checksum_failed": "The machine readable lines could not be validated.",
+    "document_type_mismatch": "The document does not look like the selected document type.",
+    "issuing_country_mismatch": "The document was issued by a different country than selected.",
+    "id_number_not_found": "We could not read the ID number. Retake the photo in good light.",
+    "no_machine_readable_data": "The document needs a manual check.",
+    "ocr_unavailable": "Text reading is unavailable; the document needs a manual check.",
+    "document_expired": "The document has expired.",
+    "underage": "The minimum age requirement is not met.",
+    "name_mismatch": "The name entered does not match the document.",
+    "document_number_mismatch": "The document number entered does not match the document.",
+    "date_of_birth_mismatch": "The date of birth entered does not match the document.",
+    "selfie_no_face": "We could not see a face in the selfie. Retake it facing the camera.",
+    "selfie_face_too_small": "Move closer to the camera and retake the selfie.",
+    "selfie_multiple_faces": "More than one face is visible in the selfie.",
+    "possible_spoof": "The selfie needs a manual check.",
+    "face_mismatch": "The selfie does not match the photo on the document.",
+    "face_match_uncertain": "The selfie could not be matched with confidence.",
+    "liveness_frames_missing": "The liveness steps were not completed.",
+    "liveness_no_face": "Your face was not visible during the liveness steps.",
+    "liveness_challenge_failed": "The head-turn steps were not followed. Please try again.",
+    "liveness_face_mismatch": "The liveness frames do not match the selfie.",
+    "duplicate_document": "This document was already used by another account.",
+    "duplicate_face": "This person appears to be verified under another account.",
+    "unreadable_image": "One of the images could not be read. Please retake it.",
+    "processing_error": "The verification needs a manual check.",
+    "manual_approval_required": "Awaiting manual review.",
+    "rejected_by_reviewer": "The verification was rejected after manual review.",
+}
+
+
+def describe(codes: list[str] | None) -> list[dict]:
+    return [{"code": c, "message": MESSAGES.get(c, c.replace("_", " "))} for c in codes or []]
