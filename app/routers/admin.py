@@ -501,3 +501,38 @@ def delete_admin(username: str, db: Session = Depends(get_db), ctx: Ctx = Depend
         raise HTTPException(409, "keep at least one owner")
     db.delete(a)
     audit(db, ctx.actor, "admin.deleted", detail=a.username)
+
+
+# --- version, one-tap update, change log ---------------------------------------------------
+@router.get("/system")
+def system_status(ctx: Ctx = Depends(need("system.update"))):
+    from .. import system
+    try:
+        return system.check()
+    except Exception as exc:  # noqa: BLE001 - e.g. no network to fetch
+        return {**system.version(), "updatable": False, "reason": str(exc)[:300], "waiting": []}
+
+
+@router.post("/system/update")
+def system_update(db: Session = Depends(get_db), ctx: Ctx = Depends(need("system.update"))):
+    from .. import system
+    try:
+        out = system.update()
+    except system.UpdateError as exc:
+        system.record({"status": "failed", "how": "console", "by": ctx.username or "token",
+                       "from": system.version().get("commit"), "to": None, "error": str(exc)[:1000], "changes": []})
+        audit(db, ctx.actor, "system.update_failed", detail=str(exc)[:300])
+        db.commit()
+        raise HTTPException(409, str(exc)) from exc
+    system.record({"status": "updated", "how": "console", "by": ctx.username or "token",
+                   "from": out["from"], "to": out["to"], "changes": out["applied"], "steps": out["steps"]})
+    audit(db, ctx.actor, "system.updated", detail=f"{out['from']} -> {out['to']}")
+    db.commit()
+    system.restart_soon()
+    return {**out, "restarting": True}
+
+
+@router.get("/changelog")
+def change_log(_: str = Depends(require_admin)):
+    from .. import system
+    return {"current": system.version(), "entries": system.changelog()}

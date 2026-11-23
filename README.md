@@ -203,6 +203,22 @@ def is_valid(secret: str, timestamp: str, raw_body: bytes, signature: str) -> bo
 
 A manual decision in the console sends the same webhook with `decided_by: "admin"`.
 
+## Updating and the change log
+
+Owners update from the console: **Changelog → Check for updates → Update now**.
+It pulls the branch's upstream (fast-forward only; it refuses if the checkout
+has local edits), installs requirements when `requirements.txt` changed,
+fetches any new models, checks the new version imports, and restarts the
+server in place with the same command line. If the check fails it rolls back
+to the previous commit and keeps running. Every update is in the audit trail.
+
+The Changelog tab lists every version the server has run, with the commits
+each one brought in, who updated, and failed attempts. Updates made from the
+terminal (`git pull` and a restart) are recorded at the next start too. The log
+is `<data>/changelog.jsonl`.
+
+Docker installs are not updated this way: rebuild the image instead.
+
 ## Fraud and compliance controls
 
 | Control | What it does | Result |

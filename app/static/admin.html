@@ -57,6 +57,7 @@
     <button data-tab="clients">API clients</button>
     <button data-tab="try">Try it</button>
     <button data-tab="admins">Admins</button>
+    <button data-tab="changes">Changelog</button>
     <button data-tab="account">My account</button>
   </nav>
   <span style="flex:1"></span>
@@ -175,6 +176,20 @@
       </div>
     </div>
   </section>
+  <section id="changes" class="hide">
+    <div class="card hide" id="syscard">
+      <h2>Update get.ekyc</h2>
+      <p class="mute">Owners only. Pulls the latest version, installs what changed, checks the new version starts (and rolls back if it does not), then restarts. Takes about 10–30 seconds; verifications in progress resume after the restart.</p>
+      <p id="sysver"></p>
+      <ul id="syswait"></ul>
+      <p class="bar"><button class="btn" id="syscheck">Check for updates</button><button class="btn primary hide" id="sysgo">Update now</button><span id="sysmsg" class="mute"></span></p>
+    </div>
+    <div class="card">
+      <h2>Changelog</h2>
+      <p class="mute">Every version this server has run: updates from this page and from the terminal are both recorded.</p>
+      <div id="clog"></div>
+    </div>
+  </section>
   <section id="admins" class="hide">
     <div class="card">
       <h2>Console users</h2>
@@ -215,7 +230,7 @@ async function signOut() {
   await fetch("/admin/session/logout", { method: "POST" }).catch(() => {});
   $("whoami").textContent = ""; show(false);
 }
-const TABS = ["queue", "clients", "try", "admins", "account"];
+const TABS = ["queue", "clients", "try", "admins", "changes", "account"];
 let me = { permissions: [] };
 const may = p => me.permissions.includes(p);
 const TAB_PERM = { queue: "verifications.view", clients: "clients.view", try: "tests.run", admins: "admins.manage" };
@@ -224,7 +239,7 @@ async function loadMe() {
   me = await r.json();
   for (const b of $("nav").children) {
     const t = b.dataset.tab;
-    b.classList.toggle("hide", t === "account" ? !me.username || me.username === "token" : !may(TAB_PERM[t]));
+    b.classList.toggle("hide", t === "account" ? !me.username || me.username === "token" : t === "changes" ? false : !may(TAB_PERM[t]));
   }
   $("learncard").classList.toggle("hide", !may("learning.view"));
   $("deltests").classList.toggle("hide", !may("tests.run"));
@@ -248,7 +263,52 @@ function tab(name) {
   if (name === "clients") loadClients();
   if (name === "try") loadTryClients();
   if (name === "admins") loadAdmins();
+  if (name === "changes") loadChanges();
 }
+
+// --- changelog and one-tap update ---
+const short = c => h("code", {}, c || "?");
+function changeList(changes) {
+  return h("ul", {}, (changes || []).map(c => h("li", {}, h("b", {}, c.subject), " ", h("span", { class: "mute" }, `${c.commit} · ${when(c.date)}`),
+    c.details ? h("details", {}, h("summary", { class: "mute" }, "details"), h("pre", {}, c.details)) : "")));
+}
+async function loadChanges() {
+  $("syscard").classList.toggle("hide", !may("system.update"));
+  const d = await json("/changelog");
+  const v = d.current || {};
+  $("sysver").textContent = v.commit ? `Running ${v.commit} (${v.branch}) · ${v.subject} · ${when(v.date)}` : "Version unknown (not a git checkout).";
+  $("clog").replaceChildren(...(d.entries.length ? d.entries.map(e => h("div", { class: "card", style: "margin:10px 0" },
+    h("p", {}, h("span", { class: "pill " + (e.status === "failed" ? "rejected" : "approved") }, e.status), " ",
+      h("b", {}, e.status === "failed" ? "Update failed" : e.from ? `${e.from} → ${e.to}` : `Version ${e.to}`), " ",
+      h("span", { class: "mute" }, `${when(e.at)} · ${e.how}${e.by ? " by " + e.by : ""}`)),
+    e.error ? h("pre", {}, e.error) : "",
+    e.changes?.length ? changeList(e.changes) : h("p", { class: "mute" }, e.status === "failed" ? "Nothing changed: the previous version kept running." : "No change details."))) :
+    [h("p", { class: "mute" }, "Nothing recorded yet.")]));
+}
+$("syscheck").onclick = async () => {
+  $("sysmsg").textContent = "Checking…"; $("sysgo").classList.add("hide"); $("syswait").replaceChildren();
+  try {
+    const s = await json("/system");
+    $("syswait").replaceChildren(...changeList(s.waiting).children);
+    $("sysmsg").textContent = s.updatable ? `${s.waiting.length} change(s) waiting.` : (s.reason || "Up to date.");
+    $("sysgo").classList.toggle("hide", !s.updatable);
+  } catch (e) { $("sysmsg").textContent = "Failed: " + e.message; }
+};
+$("sysgo").onclick = async () => {
+  if (!confirm("Update and restart get.ekyc now?")) return;
+  $("sysgo").disabled = true; $("sysmsg").textContent = "Updating… (installing and checking the new version)";
+  try {
+    const r = await json("/system/update", { method: "POST" });
+    $("sysmsg").textContent = `Updated ${r.from} → ${r.to}. Restarting…`;
+    await new Promise(res => setTimeout(res, 3000));
+    for (let i = 0; i < 60; i++) {
+      try { if ((await fetch("/health", { cache: "no-store" })).ok) { location.reload(); return; } } catch {}
+      await new Promise(res => setTimeout(res, 2000));
+    }
+    $("sysmsg").textContent = "The server has not come back after 2 minutes: check server.log on the Mac mini.";
+  } catch (e) { $("sysmsg").textContent = "Update failed, nothing changed: " + e.message; loadChanges(); }
+  finally { $("sysgo").disabled = false; }
+};
 $("nav").addEventListener("click", e => e.target.dataset.tab && tab(e.target.dataset.tab));
 $("logout").onclick = signOut;
 $("useToken").onclick = () => { $("pwform").classList.add("hide"); $("tokform").classList.remove("hide"); $("token").focus(); };

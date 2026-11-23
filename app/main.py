@@ -36,6 +36,11 @@ def _background() -> None:
 async def lifespan(_: FastAPI):
     get_settings()  # fail fast on bad configuration
     init_db()
+    try:
+        from . import system
+        system.note_startup()
+    except Exception:  # noqa: BLE001 - never block start-up on the change log
+        log.exception("could not record the running version")
     if not face.models_available():
         log.error("face models missing in %s - run scripts/download_models.py", get_settings().models_dir)
     _stop.clear()
