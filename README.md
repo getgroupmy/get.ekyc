@@ -137,6 +137,12 @@ no camera screens, and capture improvements reach users without an app update.
 Set `EKYC_PUBLIC_URL` so links use the public address. Full walk-through:
 `/guide#hosted`.
 
+**Mobile apps: three modes**, all from the same `hosted_url`
+(Flutter SDK in `sdk/flutter/get_ekyc`, iOS and Android):
+1. SDK with native screens (`GetEkyc.start`): camera, selfie and automatic head-turn capture in the app.
+2. SDK with the hosted page inside the app (`mode: EkycMode.webView`): never leaves the app; server updates reach users at once.
+3. Browser and back to the app (`GetEkyc.openInBrowser`, then `redirect_url`).
+
 **Or your own screens**, with the API calls below.
 
 A step-by-step guide for app owners, with code in curl, Node/Deno, Python and Flutter, is served at

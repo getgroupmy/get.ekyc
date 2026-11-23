@@ -134,8 +134,25 @@ async function call(path, opts = {}) {
 }
 function show(...kids) { $("view").replaceChildren(...kids); window.scrollTo(0, 0); }
 function progress(n) { $("steps").replaceChildren(...[1, 2, 3, 4].map(i => h("i", { class: i <= n ? "on" : "" }))); }
-const leave = url => { if (url) location.replace(url); };
-const cancelBtn = () => S?.cancel_url ? h("button", { class: "btn alt", onclick: () => leave(S.cancel_url) }, t("cancel")) : null;
+// Inside an app's WebView (GET eKYC SDK or your own): tell the app instead of navigating away.
+const bridge = msg => {
+  const s = JSON.stringify(msg);
+  try {
+    if (window.EkycBridge?.postMessage) return window.EkycBridge.postMessage(s), true;          // Flutter webview_flutter
+    if (window.webkit?.messageHandlers?.ekyc) return window.webkit.messageHandlers.ekyc.postMessage(msg), true; // iOS WKWebView
+    if (window.EkycAndroid?.postMessage) return window.EkycAndroid.postMessage(s), true;        // Android addJavascriptInterface
+    if (window.ReactNativeWebView?.postMessage) return window.ReactNativeWebView.postMessage(s), true;
+    if (window.parent !== window) return window.parent.postMessage({ source: "get-ekyc", ...msg }, "*"), true; // web iframe
+  } catch {}
+  return false;
+};
+const embedded = () => !!(window.EkycBridge || window.webkit?.messageHandlers?.ekyc || window.EkycAndroid || window.ReactNativeWebView || window.parent !== window);
+const outcome = url => { try { const q = new URL(url).searchParams; return { verification_id: q.get("verification_id"), status: q.get("status") }; } catch { return {}; } };
+const leave = (url, status) => {
+  if (bridge({ event: "ekyc.finished", verification_id: S?.verification_id, status: status || outcome(url).status || null })) return;
+  if (url) location.replace(url);
+};
+const cancelBtn = () => (S?.cancel_url || embedded()) ? h("button", { class: "btn alt", onclick: () => leave(S.cancel_url, "cancelled") }, t("cancel")) : null;
 
 // Shrink a camera photo (often 12 MP) before upload: faster, and plenty for reading.
 function shrink(blob, max = 2000) {
@@ -162,11 +179,11 @@ function pick(input) {
 }
 
 // --- screens -------------------------------------------------------------------------
-function message(title, msg, url, icon) {
+function message(title, msg, url, icon, status) {
   progress(4);
   render = () => show(h("div", { class: "big" }, icon || ""), h("h1", {}, t(title)), h("p", { class: "mute" }, t(msg)),
     h("div", { class: "spacer" }),
-    url ? h("button", { class: "btn", onclick: () => leave(url) }, t("back")) : h("p", { class: "mute" }, t("close")));
+    url || embedded() ? h("button", { class: "btn", onclick: () => leave(url, status) }, t("back")) : h("p", { class: "mute" }, t("close")));
   render();
 }
 function welcome() {
@@ -305,12 +322,12 @@ async function submit() {
     if (st?.finished) return finish(st);
   }
   const st = await call("/status").catch(() => ({}));
-  message("done", "stillChecking", st.return_url, "⏳");
-  if (st.return_url) setTimeout(() => leave(st.return_url), 4000);
+  message("done", "stillChecking", st.return_url, "⏳", "submitted");
+  if (st.return_url || embedded()) setTimeout(() => leave(st.return_url, "submitted"), 4000);
 }
 function finish(st) {
-  message("done", st.state === "review" ? "review" : "doneMsg", st.return_url, "✅");
-  if (st.return_url) setTimeout(() => leave(st.return_url), 2500);
+  message("done", st.state === "review" ? "review" : "doneMsg", st.return_url, "✅", st.state);
+  if (st.return_url || embedded()) setTimeout(() => leave(st.return_url, st.state), 2500);
 }
 function fail(e, retry) {
   render = () => show(h("h1", {}, "⚠️"), h("div", { class: "note bad" }, t("error", { e: e.message })), h("div", { class: "spacer" }),
@@ -322,10 +339,10 @@ function fail(e, retry) {
 setLang(lang);
 (async () => {
   try { S = await call(""); }
-  catch (e) { return message("invalid", "invalidMsg", null, "🔗"); }
+  catch (e) { return message("invalid", "invalidMsg", null, "🔗", "invalid"); }
   $("who").textContent = S.client || "";
   $("foot").textContent = S.test ? t("test") : "";
-  if (S.state === "expired") return message("expired", "expiredMsg", S.return_url, "⌛");
+  if (S.state === "expired") return message("expired", "expiredMsg", S.return_url, "⌛", "expired");
   if (S.state !== "created") return finish({ state: S.state, return_url: S.return_url });
   welcome();
 })();

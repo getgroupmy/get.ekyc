@@ -55,7 +55,7 @@
 <header><b>GET eKYC</b><span class="mute">Integration guide</span><span style="flex:1"></span><span class="mute" id="baseShow"></span></header>
 <div class="wrap">
 <nav>
-  <a href="#overview">Overview</a><a href="#hosted">Hosted page (recommended)</a><a href="#key">1 · Get an API key</a><a href="#create">2 · Create a verification</a>
+  <a href="#overview">Overview</a><a href="#hosted">Hosted page (recommended)</a><a href="#mobile">Mobile apps: 3 modes</a><a href="#key">1 · Get an API key</a><a href="#create">2 · Create a verification</a>
   <a href="#upload">3 · Upload the photos</a><a href="#submit">4 · Submit</a><a href="#result">5 · Get the result</a>
   <a href="#webhooks">Webhooks</a><a href="#types">Document types</a><a href="#liveness">Liveness capture</a>
   <a href="#fields">What comes back</a><a href="#reasons">Reason codes</a><a href="#more">Other calls</a>
@@ -108,6 +108,21 @@ final res = await FlutterWebAuth2.authenticate(url: hostedUrl, callbackUrlScheme
 final status = Uri.parse(res).queryParameters["status"]; // a hint for the screen only
 // then refresh the driver's state from YOUR server (which got the webhook)</code></pre>
   <p class="mute">Link lost or expired before the user finished? <code>POST /v1/verifications/{id}/link</code> gives a fresh one (the old one stops working). Already collected consent in your app? Send <code>consent</code> when creating and the page skips its notice.</p>
+</section>
+
+<section id="mobile">
+  <h2>Mobile apps (iOS and Android): three modes</h2>
+  <p>All three use the same <code>hosted_url</code> from your server, and the result reaches your server by webhook in all three.</p>
+  <table><thead><tr><th>Mode</th><th>The user stays in your app?</th><th>How</th></tr></thead><tbody>
+    <tr><td><b>1 · SDK, native screens</b></td><td>Yes</td><td>Flutter package <code>get_ekyc</code>: <code>GetEkyc.start(context, hostedUrl: url)</code>. Native document camera, selfie and head turns captured automatically with on-device face tracking.</td></tr>
+    <tr><td><b>2 · SDK, hosted page in the app</b></td><td>Yes</td><td><code>GetEkyc.start(context, hostedUrl: url, mode: EkycMode.webView)</code>. The hosted page runs inside the app; it can't navigate away, and reports back through the <code>EkycBridge</code> channel. Every server update reaches users at once.</td></tr>
+    <tr><td><b>3 · Browser, back to the app</b></td><td>Leaves, then returns</td><td><code>GetEkyc.openInBrowser(url)</code> (or any browser / web app). The user returns through your <code>redirect_url</code>; read it with <code>EkycResult.fromReturnUri</code>.</td></tr>
+  </tbody></table>
+  <p class="mute">Not on Flutter? Load <code>hosted_url</code> in your own WebView and listen for the page's message: it calls
+  <code>window.EkycBridge.postMessage</code> (Flutter / Android JS channel), <code>webkit.messageHandlers.ekyc</code> (iOS WKWebView),
+  <code>EkycAndroid.postMessage</code> (Android <code>addJavascriptInterface</code>), <code>ReactNativeWebView.postMessage</code>, or
+  <code>parent.postMessage</code> in an iframe, with <code>{"event":"ekyc.finished","verification_id":"ver_…","status":"…"}</code>.
+  Grant the camera to the WebView (Android <code>onPermissionRequest</code>; iOS inline media playback).</p>
 </section>
 
 <section id="key">

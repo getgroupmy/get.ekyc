@@ -7,3 +7,6 @@ data/
 .env
 samples/
 eval-out/
+.dart_tool/
+sdk/flutter/**/build/
+sdk/flutter/**/pubspec.lock

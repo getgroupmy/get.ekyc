@@ -105,6 +105,7 @@ def session_info(token: str, db: Session = Depends(get_db)):
     meta = TYPES.get(v.document_type)
     state = "expired" if _expired(v) else v.status
     return {
+        "verification_id": v.id,
         "client": v.client.name if v.client else None,
         "state": state,
         "test": bool(v.is_test),
