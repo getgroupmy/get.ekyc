@@ -52,8 +52,14 @@ Interactive API docs are at `/docs`. The port is published on localhost only; ch
 This follows the same pattern as get-ride's `deploy/face-server`, which already runs on that NAS
 (Celeron J4125, x86-64, no AVX, Container Manager, DSM 7.2+):
 
-1. In File Station create `docker/ekyc` on volume1, and `docker/ekyc/data` inside it. Only
-   `administrators` should have access to the `docker` share.
+1. In File Station create `docker/ekyc` on volume1. Only `administrators` should have access to
+   the `docker` share. Synology's Docker does not create bind-mounted folders with the right owner,
+   so make the data folder over SSH and hand it to the container's user (uid 10001):
+
+   ```bash
+   cd /volume1/docker/ekyc && mkdir -p data && sudo chown 10001 data && chmod 700 data
+   ```
+
 2. Copy this repository's files into `/volume1/docker/ekyc`. Copy `.env.example` to `.env` there, then
    fill in `EKYC_ADMIN_TOKEN`, `EKYC_STORAGE_KEY`, `EKYC_DATA_PATH=/volume1/docker/ekyc/data` and
    `TUNNEL_TOKEN`. Type the secrets on the NAS; never send them through chat, email or git.
@@ -93,6 +99,28 @@ server** and set it to `https://ekyc.getride.my:<ek_ key>`. Both services can ru
 until you retire face-server. **This switch has not been tried against the live function yet:**
 `/compare` was built to the contract described in that session, not tested against
 `supabase/functions/_shared/face_server.ts`, which this repository cannot see.
+
+### What get-ride already has, and what this adds
+
+Checked against `getgroupmy/get-ride` main on 23 Nov 2026. get-ride already runs sign-in checks
+(`identity_checks`, migration 0281, Admin › Documents › Sign-in checks):
+
+| Step | get-ride today | get.ekyc |
+|---|---|---|
+| Live selfie | On the phone with ML Kit (eyes open or head turn); only `liveness = passed` and `blink`/`turn` reach the server | Checks the head-turn frames on the server, so a modified app cannot just claim "passed" |
+| Reading the ID | Phone ML Kit, then the NAS `doc-reader` (RapidOCR), then Google Vision (`id-read`) → `read_name`, `read_ic`, `read_expiry` | Validates what is read: MRZ check digits on passports, MyKad date and place-of-birth code, expiry, minimum age |
+| Name / IC against the profile | `mismatch` (`name`, `ic`) | Same idea, with fuzzy name matching |
+| Selfie against ID photo | `face-compare`: NAS face-server, then AWS, then in-browser → `face_score`, `face_state` | Same models and threshold, plus `/compare` so it can be the NAS step |
+| Same person or ID on two accounts | Not checked | Duplicate document and duplicate face across users |
+| Decision | Admin approves or rejects; the score is advisory | Same by default (`EKYC_AUTO_APPROVE=false`) |
+
+The rule in get-ride's `docs/NAS.md` applies: get.ride must keep working when the NAS is off, so
+everything here is a second opinion that can be missing, never a gate the app waits on.
+
+The smallest useful first step needs no app change: point the Face match server key at this
+service's `/compare`. A full integration would add a get-ride edge function that, after an
+`identity_checks` upload, creates a verification here with the photos from storage, and store the
+result on the check from the signed webhook. That is get-ride work, not done yet.
 
 ## Integrating (get-ride or any app)
 

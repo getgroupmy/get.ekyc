@@ -62,8 +62,11 @@ def health(request: Request, db=Depends(get_db)):  # noqa: ANN001
     if denied:
         return denied
     ready = face.models_available() and ocr.available()
-    return {"status": "ok" if ready else "degraded", "model": compat.MODEL, "face_models": face.models_available(),
+    body = {"status": "ok" if ready else "degraded", "model": compat.MODEL, "face_models": face.models_available(),
             "ocr": ocr.available(), "passive_liveness": liveness.passive_available()}
+    if request.headers.get("x-api-key") is not None:
+        body["key"] = "ok"  # same as face-server: Admin > API Keys > Test reads this
+    return body
 
 
 @app.get("/", include_in_schema=False)

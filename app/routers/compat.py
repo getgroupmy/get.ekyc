@@ -78,5 +78,5 @@ def health_key_check(request: Request, db: Session) -> JSONResponse | None:
     try:
         require_client(key, db)
     except Exception:  # noqa: BLE001
-        return JSONResponse({"error": "unauthorized"}, status_code=401)
+        return JSONResponse({"error": "bad_key"}, status_code=401)
     return None

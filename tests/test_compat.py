@@ -21,8 +21,10 @@ def test_display_score_matches_face_server_scale():
 
 def test_health_key_check(client, api_key):
     assert client.get("/health").json()["model"] == "SFace"
-    assert client.get("/health", headers=api_key).status_code == 200
-    assert client.get("/health", headers={"x-api-key": "ek_wrong"}).status_code == 401
+    ok = client.get("/health", headers=api_key)
+    assert ok.status_code == 200 and ok.json()["key"] == "ok"
+    bad = client.get("/health", headers={"x-api-key": "ek_wrong"})
+    assert bad.status_code == 401 and bad.json() == {"error": "bad_key"}
 
 
 def test_compare_contract(client, api_key, need_models):
