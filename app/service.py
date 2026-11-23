@@ -39,6 +39,14 @@ def purge_media(db: Session, v: Verification) -> None:
     v.media_purged = True
 
 
+def delete_entirely(db: Session, v: Verification, actor: str) -> None:
+    """Tests only: remove the verification itself, its images and data. The
+    audit trail keeps one line saying it existed."""
+    purge_media(db, v)
+    audit(db, actor, "test.deleted", v.id)
+    db.delete(v)
+
+
 def erase(db: Session, v: Verification, actor: str) -> None:
     """Right-to-erasure: remove images, biometrics and extracted PII, keep the audit trail."""
     purge_media(db, v)
@@ -50,7 +58,8 @@ def erase(db: Session, v: Verification, actor: str) -> None:
 def _duplicates(db: Session, v: Verification, embedding: np.ndarray | None, doc_hash: str | None) -> dict:
     s = get_settings()
     q = select(Verification).where(Verification.client_id == v.client_id, Verification.id != v.id,
-                                   Verification.status.in_(("approved", "review")))
+                                   Verification.status.in_(("approved", "review")),
+                                   Verification.is_test.is_(bool(v.is_test)))
     hits: list[str] = []
     code = None
     for other in db.scalars(q):
@@ -134,6 +143,11 @@ def housekeeping() -> None:
             purge_media(db, v)
             v.status = "expired"
             audit(db, "system", "verification.expired", v.id)
+        if s.test_retention_hours > 0:
+            old_tests = select(Verification).where(Verification.is_test.is_(True),
+                                                   Verification.created_at < now - timedelta(hours=s.test_retention_hours))
+            for v in db.scalars(old_tests):
+                delete_entirely(db, v, "system")
         if s.retention_days > 0:
             old = select(Verification).where(Verification.media_purged.is_(False),
                                              Verification.status.in_(("approved", "rejected")),

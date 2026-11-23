@@ -29,6 +29,7 @@ def payload_for(v: Verification) -> dict:
         "event": "verification.completed",
         "id": v.id,
         "external_ref": v.external_ref,
+        "test": bool(v.is_test),
         "status": v.status,
         "reasons": v.reasons or [],
         "decided_by": v.decided_by,

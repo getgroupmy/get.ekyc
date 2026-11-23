@@ -50,16 +50,43 @@ def revoke_client(cid: str, db: Session = Depends(get_db)):
 
 
 @router.get("/stats")
-def stats(db: Session = Depends(get_db)):
-    rows = db.execute(select(Verification.status, func.count()).group_by(Verification.status)).all()
-    return {"by_status": {status: n for status, n in rows}}
+def stats(kind: str = "real", db: Session = Depends(get_db)):
+    q = select(Verification.status, func.count()).group_by(Verification.status)
+    if kind in ("test", "real"):
+        q = q.where(Verification.is_test.is_(kind == "test"))
+    rows = db.execute(q).all()
+    tests = db.scalar(select(func.count()).select_from(Verification).where(Verification.is_test.is_(True)))
+    return {"by_status": {status: n for status, n in rows}, "tests": tests,
+            "test_retention_hours": get_settings().test_retention_hours}
+
+
+@router.delete("/tests", status_code=200)
+def delete_all_tests(db: Session = Depends(get_db)):
+    n = 0
+    for v in db.scalars(select(Verification).where(Verification.is_test.is_(True))):
+        service.delete_entirely(db, v, "admin")
+        n += 1
+    return {"deleted": n}
+
+
+@router.post("/verifications/{vid}/test")
+def mark_test(vid: str, test: bool = True, db: Session = Depends(get_db)):
+    """Mark a verification as a test (or back to real), e.g. a staff run made through the API."""
+    v = db.get(Verification, vid)
+    if v is None:
+        raise HTTPException(404, "verification not found")
+    v.is_test = test
+    audit(db, "admin", "verification.marked_" + ("test" if test else "real"), v.id)
+    return {"id": v.id, "test": v.is_test}
 
 
 @router.get("/verifications")
-def list_verifications(status: str | None = None, limit: int = 100, db: Session = Depends(get_db)):
+def list_verifications(status: str | None = None, kind: str = "all", limit: int = 100, db: Session = Depends(get_db)):
     q = select(Verification).where(Verification.status != "deleted")
     if status:
         q = q.where(Verification.status == status)
+    if kind in ("test", "real"):
+        q = q.where(Verification.is_test.is_(kind == "test"))
     rows = db.scalars(q.order_by(Verification.created_at.desc()).limit(max(1, min(limit, 500))))
     return {"items": [verification_out(v, service.required_media(v), admin=True) for v in rows]}
 
@@ -111,10 +138,15 @@ def decide(vid: str, body: Decision, db: Session = Depends(get_db)):
 
 @router.delete("/verifications/{vid}", status_code=204)
 def erase(vid: str, db: Session = Depends(get_db)):
+    """A test is deleted entirely; a real verification is erased (images and
+    personal data removed, the record and audit trail kept)."""
     v = db.get(Verification, vid)
     if v is None:
         raise HTTPException(404, "verification not found")
-    service.erase(db, v, "admin")
+    if v.is_test:
+        service.delete_entirely(db, v, "admin")
+    else:
+        service.erase(db, v, "admin")
 
 
 @router.post("/try", status_code=202)
@@ -147,7 +179,7 @@ async def try_verification(
                                          ("address", address)) if v.strip()} or None
     v = Verification(id="ver_" + secrets.token_hex(12), client_id=c.id, external_ref="console-test",
                      document_type=document_type, country=country, require_liveness=False,
-                     liveness_challenge=None, claimed=claimed)
+                     liveness_challenge=None, claimed=claimed, is_test=True)
     db.add(v)
     db.flush()
     limit = get_settings().max_upload_mb * 1024 * 1024

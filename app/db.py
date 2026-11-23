@@ -78,6 +78,7 @@ class Verification(Base):
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
     media_purged: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_test: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
     client: Mapped[ApiClient] = relationship()
     media: Mapped[list["Media"]] = relationship(back_populates="verification", cascade="all, delete-orphan")
@@ -129,7 +130,21 @@ def init_db() -> None:
             cur.close()
 
     Base.metadata.create_all(_engine)
+    _migrate(_engine)
     _Session = sessionmaker(_engine, expire_on_commit=False)
+
+
+def _migrate(engine) -> None:  # noqa: ANN001
+    """Columns added after a database was first created (create_all only makes
+    missing tables). Each step is safe to run again."""
+    from sqlalchemy import inspect, text
+
+    cols = {c["name"] for c in inspect(engine).get_columns("verifications")}
+    with engine.begin() as conn:
+        if "is_test" not in cols:
+            conn.execute(text("ALTER TABLE verifications ADD COLUMN is_test BOOLEAN NOT NULL DEFAULT 0"))
+            # Runs made from the console before tests were marked
+            conn.execute(text("UPDATE verifications SET is_test = 1 WHERE external_ref = 'console-test'"))
 
 
 @contextmanager

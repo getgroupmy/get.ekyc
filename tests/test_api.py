@@ -162,3 +162,31 @@ def test_console_try_runs_as_a_client(client, api_key, need_models):
     assert ex["document_type"] == "passport" and ex["document_type_source"] == "mrz" and ex["country"] == "UTO"
     assert client.post("/admin/api/try", data={"client_id": cid}, files=files).status_code == 401
     assert client.post("/admin/api/try", data={"client_id": "cli_nope"}, files=files, headers=ADMIN).status_code == 404
+
+
+def test_tests_are_marked_kept_apart_and_deleted(client, api_key, need_models):
+    from datetime import timedelta
+    from app import service
+    from app.db import Verification, session_scope, utcnow
+    doc = synth.passport_image(synth.td3_lines(number="Q55555555"), synth.face_bgr())
+    files = {"document_front": doc, "selfie": synth.jpeg(synth.selfie())}
+    real = _run(client, api_key, {"document_type": "passport", "external_ref": "real-user"}, files)
+    test = _run(client, api_key, {"document_type": "passport", "external_ref": "staff", "test": True}, files)
+    assert test["test"] is True and real["test"] is False
+    # the same document under a test is not a duplicate of the real one
+    assert "duplicate_document" not in test["reasons"]
+    stats = client.get("/admin/api/stats", headers=ADMIN).json()
+    assert stats["tests"] >= 1
+    tests = client.get("/admin/api/verifications?kind=test", headers=ADMIN).json()["items"]
+    assert test["id"] in {v["id"] for v in tests} and real["id"] not in {v["id"] for v in tests}
+    # older than the retention: housekeeping deletes it entirely, the real one stays
+    with session_scope() as db:
+        db.get(Verification, test["id"]).created_at = utcnow() - timedelta(hours=49)
+    service.housekeeping()
+    assert client.get(f"/v1/verifications/{test['id']}", headers=api_key).status_code == 404
+    assert client.get(f"/v1/verifications/{real['id']}", headers=api_key).status_code == 200
+    # delete-all removes the remaining tests only
+    _run(client, api_key, {"document_type": "passport", "test": True}, files)
+    assert client.delete("/admin/api/tests", headers=ADMIN).json()["deleted"] >= 1
+    assert client.get("/admin/api/stats", headers=ADMIN).json()["tests"] == 0
+    client.delete(f"/v1/verifications/{real['id']}", headers=api_key)

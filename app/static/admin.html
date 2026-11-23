@@ -73,12 +73,14 @@
     <div class="card">
       <div class="bar" style="margin-bottom:10px">
         <h2 style="margin:0;flex:1">Verifications</h2>
+        <select id="kind" style="width:auto"><option value="real">Real</option><option value="test">Tests</option><option value="all">All</option></select>
         <select id="filter" style="width:auto">
           <option value="review">Needs review</option><option value="">All</option>
           <option value="approved">Approved</option><option value="rejected">Rejected</option>
           <option value="processing">Processing</option><option value="created">Created</option>
         </select>
         <button class="btn" id="refresh">Refresh</button>
+        <button class="btn danger" id="deltests">Delete all tests</button>
       </div>
       <table><thead><tr><th>Created</th><th>Client</th><th>User ref</th><th>Document</th><th>Status</th><th>Reasons</th></tr></thead>
       <tbody id="rows"></tbody></table>
@@ -165,16 +167,26 @@ $("loginBtn").onclick = async () => {
 $("token").addEventListener("keydown", e => e.key === "Enter" && $("loginBtn").click());
 
 async function loadQueue() {
-  const [stats, list] = await Promise.all([json("/stats"), json("/verifications" + ($("filter").value ? "?status=" + $("filter").value : ""))]);
+  const kind = $("kind").value;
+  const qs = new URLSearchParams({ kind }); if ($("filter").value) qs.set("status", $("filter").value);
+  const [stats, list] = await Promise.all([json("/stats?kind=" + kind), json("/verifications?" + qs)]);
+  $("deltests").textContent = `Delete all tests (${stats.tests})`; $("deltests").disabled = !stats.tests;
+  $("deltests").title = `Tests are deleted automatically after ${stats.test_retention_hours} hours`;
   $("stats").replaceChildren(...["review", "approved", "rejected", "processing", "created"].map(s =>
     h("div", { class: "stat" }, h("b", { class: s }, String(stats.by_status[s] || 0)), s)));
   $("rows").replaceChildren(...list.items.map(v => h("tr", { class: "row", onclick: () => openDetail(v.id) },
     h("td", {}, when(v.created_at)), h("td", {}, v.client), h("td", {}, v.external_ref || "—"),
-    h("td", {}, v.document_type + (v.country ? " · " + v.country : "")), h("td", {}, pill(v.status)),
+    h("td", {}, v.document_type + (v.country ? " · " + v.country : "")),
+    h("td", {}, pill(v.status), v.test ? h("span", { class: "pill skipped", style: "margin-left:6px" }, "TEST") : ""),
     h("td", { class: "mute" }, (v.reasons || []).join(", ")))));
   $("empty").classList.toggle("hide", list.items.length > 0);
 }
-$("filter").onchange = loadQueue; $("refresh").onclick = loadQueue;
+$("filter").onchange = loadQueue; $("kind").onchange = loadQueue; $("refresh").onclick = loadQueue;
+$("deltests").onclick = async () => {
+  if (!confirm("Delete every test verification, with its images and data?")) return;
+  const r = await json("/tests", { method: "DELETE" }); $("detail").replaceChildren(); loadQueue();
+  alert(`Deleted ${r.deleted} test verification(s).`);
+};
 
 async function openDetail(id) {
   const v = await json("/verifications/" + id);
@@ -192,7 +204,7 @@ async function openDetail(id) {
   const decide = d => async () => { await json(`/verifications/${id}/decision`, { method: "POST", body: JSON.stringify({ decision: d, note: note.value || null }) }); await loadQueue(); openDetail(id); };
   const canDecide = ["review", "approved", "rejected"].includes(v.status);
   $("detail").replaceChildren(h("div", { class: "card" },
-    h("div", { class: "bar" }, h("h2", { style: "margin:0;flex:1" }, v.id), pill(v.status)),
+    h("div", { class: "bar" }, h("h2", { style: "margin:0;flex:1" }, v.id), v.test ? h("span", { class: "pill skipped" }, "TEST") : "", pill(v.status)),
     h("p", { class: "mute" }, `${v.client} · ${v.external_ref || "no user ref"} · decided by ${v.decided_by || "—"} · ${when(v.completed_at)}`),
     v.media.length ? imgs : h("p", { class: "mute" }, "Images have been removed."),
     h("div", { class: "grid", style: "margin-top:16px" },
@@ -205,7 +217,8 @@ async function openDetail(id) {
       h("button", { class: "btn primary", onclick: decide("approved") }, "Approve"),
       h("button", { class: "btn danger", onclick: decide("rejected") }, "Reject"),
       h("span", { style: "flex:1" }),
-      h("button", { class: "btn danger", onclick: async () => { if (confirm("Permanently erase the images and personal data for this verification?")) { await api("/verifications/" + id, { method: "DELETE" }); $("detail").replaceChildren(); loadQueue(); } } }, "Erase data"))) : "",
+      h("button", { class: "btn", onclick: async () => { await json(`/verifications/${id}/test?test=${!v.test}`, { method: "POST" }); loadQueue(); openDetail(id); } }, v.test ? "Mark as real" : "Mark as test"),
+      h("button", { class: "btn danger", onclick: async () => { if (confirm(v.test ? "Delete this test verification entirely?" : "Permanently erase the images and personal data for this verification?")) { await api("/verifications/" + id, { method: "DELETE" }); $("detail").replaceChildren(); loadQueue(); } } }, v.test ? "Delete test" : "Erase data"))) : "",
     h("h2", { style: "margin-top:16px" }, "Audit trail"),
     h("pre", {}, v.audit.map(a => `${when(a.at)}  ${a.actor}  ${a.action}  ${a.detail || ""}`).join("\n"))));
   $("detail").scrollIntoView({ behavior: "smooth" });

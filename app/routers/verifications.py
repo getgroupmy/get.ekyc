@@ -47,6 +47,7 @@ def create(body: CreateVerification, client: ApiClient = Depends(require_client)
         document_type=body.document_type, country=body.country.upper() if body.country else None,
         require_liveness=live, liveness_challenge=liveness.new_challenge() if live else None,
         claimed=body.claimed.model_dump(mode="json", exclude_none=True) if body.claimed else None,
+        is_test=body.test,
     )
     db.add(v)
     audit(db, f"client:{client.id}", "verification.created", v.id)

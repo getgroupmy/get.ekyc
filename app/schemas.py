@@ -25,6 +25,7 @@ class CreateVerification(BaseModel):
     external_ref: str | None = Field(default=None, max_length=200, description="Your user id")
     claimed: Claimed | None = None
     require_liveness: bool | None = None
+    test: bool = Field(default=False, description="A test run: never used for duplicates, deleted after 48 h")
 
 
 class CreateClient(BaseModel):
@@ -46,6 +47,7 @@ def verification_out(v: Verification, required: list[str], *, admin: bool = Fals
         "id": v.id,
         "status": v.status,
         "external_ref": v.external_ref,
+        "test": bool(v.is_test),
         "document_type": v.document_type,
         "country": v.country,
         "require_liveness": v.require_liveness,
