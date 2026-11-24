@@ -438,10 +438,25 @@ async function loadClients() {
     h("td", {}, String(c.uses)), h("td", { class: "approved" }, String(c.approved)), h("td", { class: "rejected" }, String(c.rejected)),
     h("td", { class: "review" }, String(c.review)), h("td", { class: "mute" }, String(c.tests)),
     h("td", {}, !list.can_manage ? "" : c.active
-      ? h("button", { class: "btn danger", onclick: async () => { if (confirm(`Revoke the key for ${c.name} (${c.key_prefix}…)?`)) { await api("/clients/" + c.id, { method: "DELETE" }); loadClients(); } } }, "Revoke")
+      ? h("span", { class: "bar" },
+          h("button", { class: "btn", onclick: () => editWebhook(c) }, "Webhook"),
+          h("button", { class: "btn danger", onclick: async () => { if (confirm(`Revoke the key for ${c.name} (${c.key_prefix}…)?`)) { await api("/clients/" + c.id, { method: "DELETE" }); loadClients(); } } }, "Revoke"))
       : c.deletable
         ? h("button", { class: "btn danger", onclick: async () => { if (confirm(`Delete the unused key ${c.key_prefix}… permanently?`)) { await api(`/clients/${c.id}/permanent`, { method: "DELETE" }); loadClients(); } } }, "Delete")
         : h("span", { class: "mute" }, "kept: used")))));
+}
+async function editWebhook(c) {
+  const url = prompt(`Webhook address for ${c.name} (https://…). Leave empty to remove it.`, c.webhook_url || "");
+  if (url === null) return;
+  const fresh = !!url.trim() && !!c.webhook_url && confirm("Also make a new webhook secret? (The app must then be given the new one.)");
+  try {
+    const r = await json(`/clients/${c.id}/webhook`, { method: "PUT", body: JSON.stringify({ webhook_url: url.trim() || null, new_secret: fresh }) });
+    $("cnew").replaceChildren(r.webhook_secret
+      ? h("div", { class: "card" }, h("b", {}, "Copy this now — it is not shown again."),
+          h("dl", {}, h("dt", {}, "Webhook URL"), h("dd", {}, r.webhook_url), h("dt", {}, "Webhook secret"), h("dd", { class: "secret" }, r.webhook_secret)))
+      : h("p", { class: "mute" }, r.webhook_url ? `Webhook for ${c.name} now goes to ${r.webhook_url} (same secret).` : `Webhook removed for ${c.name}.`));
+    loadClients();
+  } catch (e) { $("cnew").replaceChildren(h("p", { class: "rejected" }, e.message)); }
 }
 $("cadd").onclick = async () => {
   const body = { name: $("cname").value.trim(), webhook_url: $("chook").value.trim() || null };

@@ -3,7 +3,7 @@ from __future__ import annotations
 import secrets
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -92,6 +92,30 @@ def list_clients(db: Session = Depends(get_db), ctx: Ctx = Depends(need("clients
         u = usage.get(c.id, empty)
         items.append({**_client_out(c), **u, "deletable": not c.active and u["uses"] == 0 and u["tests"] == 0})
     return {"items": items, "can_manage": ctx.can("clients.manage")}
+
+
+class WebhookChange(BaseModel):
+    webhook_url: HttpUrl | None = None
+    new_secret: bool = False
+
+
+@router.put("/clients/{cid}/webhook")
+def set_webhook(cid: str, body: WebhookChange, db: Session = Depends(get_db), ctx: Ctx = Depends(need("clients.manage"))):
+    """Set, change or remove a client's webhook address. A secret is made when
+    there is none yet (or when asked) and shown once; the API key is unchanged."""
+    c = _client_for(db, ctx, cid)
+    if not c.active:
+        raise HTTPException(409, "this key is revoked")
+    c.webhook_url = str(body.webhook_url) if body.webhook_url else None
+    secret = None
+    if c.webhook_url and (c.webhook_secret is None or body.new_secret):
+        secret = secrets.token_urlsafe(32)
+        c.webhook_secret = secret.encode()
+    if not c.webhook_url:
+        c.webhook_secret = None
+    audit(db, ctx.actor, "client.webhook_changed", detail=f"{c.id}: {c.webhook_url or 'removed'}"
+          + (" (new secret)" if secret else ""))
+    return {**_client_out(c), "webhook_secret": secret}
 
 
 @router.delete("/clients/{cid}/permanent", status_code=204)

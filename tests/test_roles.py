@@ -92,3 +92,16 @@ def test_keep_one_owner(client):
         with session_scope() as db:
             for u in db.query(AdminUser).all():
                 db.delete(u)
+
+
+def test_webhook_can_be_added_later(client):
+    from tests.conftest import ADMIN
+    c = client.post("/admin/api/clients", json={"name": "hook-later"}, headers=ADMIN).json()
+    assert c["webhook_secret"] is None
+    r = client.put(f"/admin/api/clients/{c['id']}/webhook", json={"webhook_url": "https://app.example.com/hook"}, headers=ADMIN)
+    assert r.status_code == 200 and r.json()["webhook_secret"]  # first secret shown once
+    r2 = client.put(f"/admin/api/clients/{c['id']}/webhook", json={"webhook_url": "https://app.example.com/hook2"}, headers=ADMIN)
+    assert r2.json()["webhook_secret"] is None and r2.json()["webhook_url"] == "https://app.example.com/hook2"
+    r3 = client.put(f"/admin/api/clients/{c['id']}/webhook", json={"webhook_url": "https://app.example.com/hook2", "new_secret": True}, headers=ADMIN)
+    assert r3.json()["webhook_secret"] and r3.json()["webhook_secret"] != r.json()["webhook_secret"]
+    assert client.put(f"/admin/api/clients/{c['id']}/webhook", json={"webhook_url": "ftp://x"}, headers=ADMIN).status_code == 422
