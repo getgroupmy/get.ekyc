@@ -124,6 +124,11 @@
       <p><button class="btn primary" id="cadd">Create client</button></p>
       <div id="cnew"></div>
     </div>
+    <div class="card" id="sdkcard"><h2>SDKs for app developers</h2>
+      <p class="mute">For apps that are not in our code repository. Give the developer the SDK file and an API key from above; the guide shows every step.</p>
+      <div id="sdkrows"></div>
+      <p class="mute">The app never holds the API key: the app's own server creates each verification and passes the app only the one-time link. <a href="/guide#mobile" target="_blank" rel="noopener">Mobile integration steps ↗</a></p>
+    </div>
     <div class="card"><h2>Clients</h2>
       <table><thead><tr><th>Name</th><th>Key</th><th>Webhook</th><th>Status</th><th>Uses</th><th>Approved</th><th>Rejected</th><th>Review</th><th>Tests</th><th></th></tr></thead><tbody id="crows"></tbody></table>
       <p class="mute">Uses counts real verifications. A revoked key that was never used can be deleted; a used one stays as a record.</p>
@@ -260,7 +265,7 @@ function tab(name) {
   for (const id of TABS) $(id).classList.toggle("hide", id !== name);
   if (name === "account") $("myrole").textContent = `Signed in as ${me.username} · role ${me.role} · sees ${me.sees_all ? "every API client" : "only the API clients you created"}.`;
   if (name === "queue") { loadQueue(); if (may("learning.view")) loadLearning().catch(() => {}); if (may("compliance.view")) sanctionsLine().then(t => { if (t) $("health").textContent = $("health").textContent.split(" · sanctions")[0] + t; }); }
-  if (name === "clients") loadClients();
+  if (name === "clients") { loadClients(); loadSdks(); }
   if (name === "try") loadTryClients();
   if (name === "admins") loadAdmins();
   if (name === "changes") loadChanges();
@@ -444,6 +449,18 @@ async function loadClients() {
       : c.deletable
         ? h("button", { class: "btn danger", onclick: async () => { if (confirm(`Delete the unused key ${c.key_prefix}… permanently?`)) { await api(`/clients/${c.id}/permanent`, { method: "DELETE" }); loadClients(); } } }, "Delete")
         : h("span", { class: "mute" }, "kept: used")))));
+}
+async function loadSdks() {
+  try {
+    const list = await json("/sdk");
+    $("sdkrows").replaceChildren(...list.items.map(x => h("div", { class: "bar", style: "margin:8px 0" },
+      h("b", {}, x.name), h("span", { class: "mute" }, `v${x.version} · ${x.modes.join(" · ")}`),
+      x.available ? h("button", { class: "btn primary", onclick: async () => {
+        const r = await api(`/sdk/${x.id}.zip`);
+        const a = h("a", { href: URL.createObjectURL(await r.blob()), download: `get_ekyc-${x.version}.zip` });
+        document.body.append(a); a.click(); a.remove();
+      } }, "Download") : h("span", { class: "mute" }, "not on this server"))));
+  } catch { $("sdkcard").classList.add("hide"); }
 }
 async function editWebhook(c) {
   const url = prompt(`Webhook address for ${c.name} (https://…). Leave empty to remove it.`, c.webhook_url || "");

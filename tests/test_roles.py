@@ -105,3 +105,20 @@ def test_webhook_can_be_added_later(client):
     r3 = client.put(f"/admin/api/clients/{c['id']}/webhook", json={"webhook_url": "https://app.example.com/hook2", "new_secret": True}, headers=ADMIN)
     assert r3.json()["webhook_secret"] and r3.json()["webhook_secret"] != r.json()["webhook_secret"]
     assert client.put(f"/admin/api/clients/{c['id']}/webhook", json={"webhook_url": "ftp://x"}, headers=ADMIN).status_code == 422
+
+
+def test_sdk_download_zip(client):
+    import io
+    import zipfile
+    from tests.conftest import ADMIN
+    items = client.get("/admin/api/sdk", headers=ADMIN).json()["items"]
+    fl = next(x for x in items if x["id"] == "flutter")
+    assert fl["available"] and fl["version"]
+    r = client.get("/admin/api/sdk/flutter.zip", headers=ADMIN)
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    top = f"get_ekyc-{fl['version']}/"
+    assert top + "pubspec.yaml" in names and top + "lib/get_ekyc.dart" in names and top + "README.md" in names
+    assert not any(".dart_tool" in n or "/build/" in n or n.endswith("pubspec.lock") for n in names)
+    assert client.get("/admin/api/sdk/flutter.zip").status_code == 401
+    assert client.get("/admin/api/sdk/nope.zip", headers=ADMIN).status_code == 404

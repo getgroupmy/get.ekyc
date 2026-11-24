@@ -118,6 +118,9 @@ final status = Uri.parse(res).queryParameters["status"]; // a hint for the scree
     <tr><td><b>2 · SDK, hosted page in the app</b></td><td>Yes</td><td><code>GetEkyc.start(context, hostedUrl: url, mode: EkycMode.webView)</code>. The hosted page runs inside the app; it can't navigate away, and reports back through the <code>EkycBridge</code> channel. Every server update reaches users at once.</td></tr>
     <tr><td><b>3 · Browser, back to the app</b></td><td>Leaves, then returns</td><td><code>GetEkyc.openInBrowser(url)</code> (or any browser / web app). The user returns through your <code>redirect_url</code>; read it with <code>EkycResult.fromReturnUri</code>.</td></tr>
   </tbody></table>
+  <p><b>Getting the SDK:</b> in the GET eKYC console, <b>API clients → SDKs for app developers → Download</b> (a zip of the
+  <code>get_ekyc</code> package). Unzip it into your app, e.g. <code>packages/get_ekyc</code>, and add
+  <code>get_ekyc: { path: packages/get_ekyc }</code> under <code>dependencies</code> in <code>pubspec.yaml</code>. Its README lists the iOS and Android permissions.</p>
   <p class="mute">Not on Flutter? Load <code>hosted_url</code> in your own WebView and listen for the page's message: it calls
   <code>window.EkycBridge.postMessage</code> (Flutter / Android JS channel), <code>webkit.messageHandlers.ekyc</code> (iOS WKWebView),
   <code>EkycAndroid.postMessage</code> (Android <code>addJavascriptInterface</code>), <code>ReactNativeWebView.postMessage</code>, or

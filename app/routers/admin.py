@@ -560,3 +560,46 @@ def system_update(db: Session = Depends(get_db), ctx: Ctx = Depends(need("system
 def change_log(_: str = Depends(require_admin)):
     from .. import system
     return {"current": system.version(), "entries": system.changelog()}
+
+
+# --- SDK downloads for app developers -------------------------------------------------------
+_SDK_ROOT = __import__("pathlib").Path(__file__).resolve().parents[2] / "sdk"
+_SDKS = {
+    "flutter": {"name": "Flutter SDK (iOS and Android)", "path": "flutter/get_ekyc", "package": "get_ekyc",
+                "modes": ["native screens", "hosted page in the app", "browser and back"]},
+}
+_SKIP = {".dart_tool", "build", ".idea", ".packages"}
+
+
+def _sdk_version(sdk: dict) -> str:
+    import re as _re
+    pub = (_SDK_ROOT / sdk["path"] / "pubspec.yaml")
+    m = _re.search(r"^version:\s*(\S+)", pub.read_text(), _re.M) if pub.exists() else None
+    return m.group(1) if m else "0"
+
+
+@router.get("/sdk")
+def sdk_list(ctx: Ctx = Depends(need("clients.view"))):
+    return {"items": [{"id": k, "name": v["name"], "version": _sdk_version(v), "modes": v["modes"],
+                       "available": (_SDK_ROOT / v["path"]).is_dir()} for k, v in _SDKS.items()]}
+
+
+@router.get("/sdk/{sid}.zip")
+def sdk_download(sid: str, db: Session = Depends(get_db), ctx: Ctx = Depends(need("clients.view"))):
+    import io
+    import zipfile
+    sdk = _SDKS.get(sid)
+    base = _SDK_ROOT / sdk["path"] if sdk else None
+    if sdk is None or not base.is_dir():
+        raise HTTPException(404, "no such SDK")
+    top = f"{sdk['package']}-{_sdk_version(sdk)}"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in sorted(base.rglob("*")):
+            rel = f.relative_to(base)
+            if not f.is_file() or set(rel.parts) & _SKIP or f.name == "pubspec.lock":
+                continue
+            z.write(f, f"{top}/{rel.as_posix()}")
+    audit(db, ctx.actor, "sdk.downloaded", detail=top)
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{top}.zip"', "Cache-Control": "no-store"})
