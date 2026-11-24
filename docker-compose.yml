@@ -34,6 +34,9 @@ services:
     restart: unless-stopped
     command: tunnel --no-autoupdate run
     environment:
-      - TUNNEL_TOKEN=${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
+      # Not required here: compose reads this line even when the tunnel profile is
+      # off, so a required variable would stop the ekyc service from starting too.
+      # Without a token cloudflared itself stops with an error.
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:-}
     depends_on:
       - ekyc
