@@ -4,7 +4,7 @@ import re
 import secrets
 from datetime import timedelta
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -130,6 +130,20 @@ async def store_media(db: Session, v: Verification, kind: str, file: UploadFile)
     db.flush()
     return {"kind": kind, "media_id": mid, "quality": images.quality(img),
             "uploaded_media": sorted(m.kind for m in v.media)}
+
+
+@router.get("/{vid}/media/{kind}")
+def download(vid: str, kind: str, client: ApiClient = Depends(require_client), db: Session = Depends(get_db)):
+    """A photo of your own verification (e.g. to keep the ID image with your
+    user record). Gone once the retention period has purged it."""
+    v = _get(db, client, vid)
+    m = next((m for m in v.media if m.kind == kind), None)
+    if m is None:
+        raise HTTPException(404, "no such photo (never uploaded, or already purged)")
+    data = storage.load(m.path, m.id)
+    audit(db, f"client:{client.id}", "media.downloaded", v.id, kind)
+    ctype = "image/png" if data[:4] == b"\x89PNG" else "image/webp" if data[8:12] == b"WEBP" else "image/jpeg"
+    return Response(data, media_type=ctype, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/{vid}/submit", status_code=202)

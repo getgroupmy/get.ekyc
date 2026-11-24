@@ -333,6 +333,8 @@ async function verifyEkycWebhook(secret: string, ts: string, raw: string, sig: s
   <h3>List and delete</h3>
   <pre><code>curl -s "BASE/v1/verifications?external_ref=driver-1042&amp;status=approved" -H "X-API-Key: $EKYC_KEY"
 curl -s -X DELETE BASE/v1/verifications/$ID -H "X-API-Key: $EKYC_KEY"   # erases images and personal data</code></pre>
+  <p><b>Download a photo of your own verification</b> (for example to keep the ID image with your user):</p>
+  <pre><code>curl -s BASE/v1/verifications/$ID/media/document_front -H "X-API-Key: $EKYC_KEY" -o front.jpg</code></pre>
 </section>
 
 <section id="rules">

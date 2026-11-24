@@ -81,3 +81,14 @@ def test_full_hosted_flow_hands_back(client, api_key, need_models):
     assert client.post(f"/v1/hosted/{t}/submit").status_code == 409  # once only
     full = client.get(f"{BASE}/{v['id']}", headers=api_key).json()
     assert full["status"] == st["state"] and full["result"]  # the result goes to the server, not the page
+
+
+def test_client_downloads_own_photo_only(client, api_key):
+    v = client.post(BASE, json={"test": True}, headers=api_key).json()
+    img = synth.jpeg(synth.selfie())
+    client.put(f"{BASE}/{v['id']}/media/selfie", files=_jpeg_file(img), headers=api_key)
+    r = client.get(f"{BASE}/{v['id']}/media/selfie", headers=api_key)
+    assert r.status_code == 200 and r.content == img and r.headers["content-type"] == "image/jpeg"
+    assert client.get(f"{BASE}/{v['id']}/media/document_back", headers=api_key).status_code == 404
+    other = client.post("/admin/api/clients", json={"name": "other-dl"}, headers=ADMIN).json()
+    assert client.get(f"{BASE}/{v['id']}/media/selfie", headers={"X-API-Key": other["api_key"]}).status_code == 404
