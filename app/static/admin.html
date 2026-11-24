@@ -43,6 +43,10 @@
   pre { background:var(--bg); padding:10px; border-radius:8px; overflow:auto; font-size:12.5px; margin:0; white-space:pre-wrap; word-break:break-word; }
   .bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .secret { font-family:ui-monospace,monospace; word-break:break-all; }
+  .nowrap { white-space:nowrap; }
+  .key { font-family:ui-monospace,monospace; white-space:nowrap; }
+  .hook { max-width:260px; overflow-wrap:anywhere; font-size:13px; }
+  .acts { white-space:nowrap; } .acts .btn + .btn { margin-left:6px; }
   .hide { display:none; }
   .slot select, .slot input.file { margin-bottom:6px; }
   .thumb { width:56px; height:40px; object-fit:cover; border-radius:6px; border:1px solid var(--line); }
@@ -130,7 +134,7 @@
       <p class="mute">The app never holds the API key: the app's own server creates each verification and passes the app only the one-time link. <a href="/guide#mobile" target="_blank" rel="noopener">Mobile integration steps ↗</a></p>
     </div>
     <div class="card"><h2>Clients</h2>
-      <table><thead><tr><th>Name</th><th>Key</th><th>Webhook</th><th>Status</th><th>Uses</th><th>Approved</th><th>Rejected</th><th>Review</th><th>Tests</th><th></th></tr></thead><tbody id="crows"></tbody></table>
+      <div style="overflow-x:auto"><table><thead><tr><th>Name</th><th>Key</th><th>Webhook</th><th>Status</th><th>Uses</th><th>Approved</th><th>Rejected</th><th>Review</th><th>Tests</th><th></th></tr></thead><tbody id="crows"></tbody></table></div>
       <p class="mute">Uses counts real verifications. A revoked key that was never used can be deleted; a used one stays as a record.</p>
     </div>
   </section>
@@ -438,12 +442,12 @@ async function loadClients() {
   const list = await json("/clients");
   $("newclient").classList.toggle("hide", !list.can_manage);
   $("crows").replaceChildren(...list.items.map(c => h("tr", {},
-    h("td", {}, c.name, h("div", { class: "mute" }, "by " + (c.created_by || "—"))), h("td", { class: "secret" }, c.key_prefix + "…"), h("td", {}, c.webhook_url || "—"),
+    h("td", { class: "nowrap" }, c.name, h("div", { class: "mute" }, "by " + (c.created_by || "—"))), h("td", { class: "key" }, c.key_prefix + "…"), h("td", { class: "hook" }, c.webhook_url || "—"),
     h("td", {}, h("span", { class: "pill " + (c.active ? "approved" : "rejected") }, c.active ? "active" : "revoked")),
     h("td", {}, String(c.uses)), h("td", { class: "approved" }, String(c.approved)), h("td", { class: "rejected" }, String(c.rejected)),
     h("td", { class: "review" }, String(c.review)), h("td", { class: "mute" }, String(c.tests)),
     h("td", {}, !list.can_manage ? "" : c.active
-      ? h("span", { class: "bar" },
+      ? h("span", { class: "acts" },
           h("button", { class: "btn", onclick: () => editWebhook(c) }, "Webhook"),
           h("button", { class: "btn danger", onclick: async () => { if (confirm(`Revoke the key for ${c.name} (${c.key_prefix}…)?`)) { await api("/clients/" + c.id, { method: "DELETE" }); loadClients(); } } }, "Revoke"))
       : c.deletable
