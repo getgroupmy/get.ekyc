@@ -26,7 +26,7 @@ services:
   # Optional HTTPS without opening a port, as get-ride's face-server does.
   # Start with: docker compose --profile tunnel up -d
   # In Cloudflare Zero Trust, point the tunnel's public hostname (e.g.
-  # ekyc.getride.my) at service HTTP  ekyc:8080, and put TUNNEL_TOKEN in .env.
+  # ekyc.getcdn.link) at service HTTP  ekyc:8080, and put TUNNEL_TOKEN in .env.
   tunnel:
     image: cloudflare/cloudflared:2024.10.1
     container_name: ekyc-tunnel

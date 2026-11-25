@@ -65,11 +65,11 @@ This follows the same pattern as get-ride's `deploy/face-server`, which already 
    fill in `EKYC_ADMIN_TOKEN`, `EKYC_STORAGE_KEY`, `EKYC_DATA_PATH=/volume1/docker/ekyc/data` and
    `TUNNEL_TOKEN`. Type the secrets on the NAS; never send them through chat, email or git.
 3. In Cloudflare Zero Trust, create a tunnel (for example `getride-ekyc`) and add a public hostname
-   such as `ekyc.getride.my` with service **HTTP** `ekyc:8080`. Copy its token into `TUNNEL_TOKEN`.
+   such as `ekyc.getcdn.link` with service **HTTP** `ekyc:8080`. Copy its token into `TUNNEL_TOKEN`.
 4. Container Manager, **Project**, **Create**: path `/volume1/docker/ekyc`, source `docker-compose.yml`.
    To include the tunnel, run `docker compose --profile tunnel up -d --build` over SSH instead, because
    the Project screen does not pass `--profile`.
-5. Check `https://ekyc.getride.my/health`. It should return `"status": "ok"` and `"model": "SFace"`.
+5. Check `https://ekyc.getcdn.link/health`. It should return `"status": "ok"` and `"model": "SFace"`.
 
 No router port is opened, and Cloudflare provides HTTPS. Block `/admin*` at Cloudflare, with an Access
 policy or a WAF rule for that path, so the console is reachable only on the NAS itself or through
@@ -96,7 +96,7 @@ and a review queue. It also serves face-server's API unchanged:
 
 To switch get-ride's existing `face-compare` edge function to this service without changing app
 code, create an API client here, then in GET-Ride go to **Admin, Settings, API Keys, Face match
-server** and set it to `https://ekyc.getride.my:<ek_ key>`. Both services can run side by side
+server** and set it to `https://ekyc.getcdn.link:<ek_ key>`. Both services can run side by side
 until you retire face-server. **This switch has not been tried against the live function yet:**
 `/compare` was built to the contract described in that session, not tested against
 `supabase/functions/_shared/face_server.ts`, which this repository cannot see.
@@ -146,7 +146,7 @@ Set `EKYC_PUBLIC_URL` so links use the public address. Full walk-through:
 **Or your own screens**, with the API calls below.
 
 A step-by-step guide for app owners, with code in curl, Node/Deno, Python and Flutter, is served at
-**`/guide`** (e.g. `https://ekyc.getride.my/guide`). Document types, reason codes and limits on it come
+**`/guide`** (e.g. `https://ekyc.getcdn.link/guide`). Document types, reason codes and limits on it come
 live from the running server. The summary below is the same flow.
 
 

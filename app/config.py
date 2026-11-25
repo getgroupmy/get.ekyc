@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     sanctions_un_url: str = "https://scsanctions.un.org/resources/xml/en/consolidated.xml"
     test_retention_hours: int = 48  # test verifications are deleted entirely after this (0 = keep)
     webhook_timeout_seconds: float = 10.0
-    public_url: str = ""  # e.g. https://ekyc.getride.my: the base of hosted verification links
+    public_url: str = ""  # e.g. https://ekyc.getcdn.link: the base of hosted verification links
     cors_origins: str = ""  # comma separated; empty = no CORS
 
     @field_validator("admin_token")
