@@ -120,4 +120,7 @@ def guide_meta():
 
 @app.get("/admin", include_in_schema=False)
 def admin_ui():
-    return FileResponse(STATIC / "admin.html", headers={"Cache-Control": "no-store"})
+    # Reachable from the internet: never inside another site's frame, no referrer.
+    return FileResponse(STATIC / "admin.html", headers={
+        "Cache-Control": "no-store", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
+        "Content-Security-Policy": "frame-ancestors 'none'", "X-Content-Type-Options": "nosniff"})

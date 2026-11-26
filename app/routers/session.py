@@ -16,6 +16,10 @@ from ..db import AdminUser, audit, get_db, utcnow
 router = APIRouter(prefix="/admin/session", tags=["admin sign-in"])
 _failures: dict[str, list[float]] = defaultdict(list)
 LOCK_AFTER, LOCK_SECONDS = 5, 15 * 60
+# The console is reachable from the internet: besides 5 wrong passwords for one
+# name from one address, an address trying many names, or one name tried from
+# many addresses, is stopped too.
+IP_LOCK_AFTER, NAME_LOCK_AFTER = 20, 30
 
 
 class Login(BaseModel):
@@ -24,22 +28,28 @@ class Login(BaseModel):
     remember: bool = False
 
 
-def _throttled(key: str) -> bool:
+def _throttled(key: str, limit: int = LOCK_AFTER) -> bool:
     now = time.time()
     _failures[key] = [t for t in _failures[key] if now - t < LOCK_SECONDS]
-    return len(_failures[key]) >= LOCK_AFTER
+    if not _failures[key]:
+        _failures.pop(key, None)  # keep the table small
+        return False
+    return len(_failures[key]) >= limit
 
 
 @router.post("/login")
 def login(body: Login, request: Request, response: Response, db: Session = Depends(get_db)):
     ip = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "?")
-    key = f"{ip}|{body.username.lower()}"
-    if _throttled(key):
+    name = body.username.strip().lower()
+    key = f"{ip}|{name}"
+    if _throttled(key) or _throttled(f"ip|{ip}", IP_LOCK_AFTER) or _throttled(f"name|{name}", NAME_LOCK_AFTER):
         raise HTTPException(429, "too many attempts; try again in 15 minutes")
     user = db.get(AdminUser, body.username.strip().lower())
     if user is None or not check_password(body.password, user.password_hash):
-        _failures[key].append(time.time())
-        audit(db, "system", "admin.login_failed", detail=body.username.strip().lower()[:60])
+        now = time.time()
+        for k in (key, f"ip|{ip}", f"name|{name}"):
+            _failures[k].append(now)
+        audit(db, "system", "admin.login_failed", detail=f"{name[:60]} from {ip[:45]}")
         raise HTTPException(401, "wrong username or password")
     _failures.pop(key, None)
     value, max_age = make_session(user.username, body.remember)

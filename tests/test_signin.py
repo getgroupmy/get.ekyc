@@ -49,3 +49,21 @@ def test_admin_password_sign_in_flow(client):
     with TestClient(app) as old:
         old.cookies.set("ekyc_session", value, path="/admin")
         assert old.get("/admin/api/stats").status_code == 401
+
+
+def test_one_address_trying_many_names_is_stopped(client):
+    from app.routers import session as sess
+    sess._failures.clear()
+    hdr = {"cf-connecting-ip": "203.0.113.9"}
+    codes = [client.post("/admin/session/login", json={"username": f"guess{i}", "password": "wrong-password-x"},
+                         headers=hdr).status_code for i in range(22)]
+    assert codes[:20] == [401] * 20 and codes[20:] == [429, 429]
+    # another address is not affected
+    assert client.post("/admin/session/login", json={"username": "guess0", "password": "wrong-password-x"},
+                       headers={"cf-connecting-ip": "198.51.100.7"}).status_code == 401
+    sess._failures.clear()
+
+
+def test_console_page_cannot_be_framed(client):
+    r = client.get("/admin")
+    assert r.headers["x-frame-options"] == "DENY" and "frame-ancestors 'none'" in r.headers["content-security-policy"]
