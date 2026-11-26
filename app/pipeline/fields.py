@@ -211,3 +211,96 @@ _NRIC = re.compile(r"(?<!\d)(\d{6}-?\d{2}-?\d{4})(?!\d)")
 def nric_in(text: str) -> str | None:
     m = _NRIC.search(text)
     return m.group(1) if m else None
+
+
+# --- the holder, read off labelled fields -----------------------------------------------
+# For cards without a machine-readable zone or a known layout (i-Kad, UNHCR card,
+# foreign ID cards, driving licences): "NAMA / NAME" then the name on the same
+# line or the next, "TARIKH LAHIR / DATE OF BIRTH", "JANTINA / SEX",
+# "WARGANEGARA / NATIONALITY". Several OCR readings vote.
+_NAME_LABEL = re.compile(r"^\s*(?:NAMA\s*LENGKAP|FULL\s*NAME|NAMA|NAME|NOM)\b(?:\s*/\s*(?:NAMA|NAME))?\s*[:.\-]?\s*(.*)$")
+_DOB_LABEL = re.compile(r"(?:DATE\s*OF\s*BIRTH|BIRTH\s*DATE|TARIKH\s*LAHIR|TGL\.?\s*LAHIR|TANGGAL\s*LAHIR|\bDOB\b|\bD\.O\.B\b)[^0-9A-Z]*(.*)$")
+_SEX_LABEL = re.compile(r"(?:\bSEX\b|JANTINA|JENIS\s*KELAMIN|\bGENDER\b|\bKELAMIN\b)\s*[:./]*\s*(.*)$")
+_NAT_LABEL = re.compile(r"(?:WARGANEGARA|KEWARGANEGARAAN|NATIONALITY|CITIZENSHIP|COUNTRY\s*OF\s*ORIGIN|\bORIGIN\b)\s*[:./]*\s*(.*)$")
+_NOT_NAME = {"NAME", "NAMA", "NO", "NUMBER", "DATE", "BIRTH", "TARIKH", "LAHIR", "SEX", "JANTINA", "CLASS", "KELAS",
+             "VALIDITY", "TEMPOH", "ADDRESS", "ALAMAT", "PASSPORT", "PASPORT", "IDENTITY", "PENGENALAN", "NATIONALITY",
+             "WARGANEGARA", "MALAYSIA", "LICENCE", "LESEN", "CARD", "KAD", "EXPIRY", "LUPUT", "VALID", "UNTIL"}
+NATIONALITIES = {
+    "MALAYSIA": "MYS", "MALAYSIAN": "MYS", "INDONESIA": "IDN", "INDONESIAN": "IDN", "WNI": "IDN", "INDIA": "IND",
+    "INDIAN": "IND", "BANGLADESH": "BGD", "BANGLADESHI": "BGD", "NEPAL": "NPL", "NEPALI": "NPL", "MYANMAR": "MMR",
+    "BURMA": "MMR", "PAKISTAN": "PAK", "PAKISTANI": "PAK", "PHILIPPINES": "PHL", "FILIPINO": "PHL", "VIETNAM": "VNM",
+    "VIET NAM": "VNM", "VIETNAMESE": "VNM", "THAILAND": "THA", "THAI": "THA", "CAMBODIA": "KHM", "SRI LANKA": "LKA",
+    "CHINA": "CHN", "CHINESE": "CHN", "SINGAPORE": "SGP", "SINGAPOREAN": "SGP", "BRUNEI": "BRN", "LAOS": "LAO",
+    "AFGHANISTAN": "AFG", "SOMALIA": "SOM", "YEMEN": "YEM", "SYRIA": "SYR", "IRAQ": "IRQ", "IRAN": "IRN",
+    "SUDAN": "SDN", "UZBEKISTAN": "UZB", "TURKMENISTAN": "TKM", "KAZAKHSTAN": "KAZ",
+}
+
+
+_LABEL_WORDS = re.compile(r"^(?:[\s/:.,-]*(?:SEX|JANTINA|JENIS\s*KELAMIN|GENDER|KELAMIN|NATIONALITY|WARGANEGARA|"
+                          r"KEWARGANEGARAAN|CITIZENSHIP|COUNTRY\s*OF\s*ORIGIN|ORIGIN))+[\s/:.,-]*")
+
+
+def _value(s: str) -> str:
+    """The value after a bilingual label: "JANTINA / SEX: LELAKI" -> "LELAKI"."""
+    return _LABEL_WORDS.sub("", s).strip()
+
+
+def _clean_name(s: str) -> str | None:
+    s = re.sub(r"[^A-Z@'/.\- ]", " ", s.upper())
+    words = [w for w in s.split() if w]
+    while words and (words[0] in _NOT_NAME or len(words[0]) == 1 and words[0] not in ("@",)):
+        words.pop(0)
+    while words and (words[-1] in _NOT_NAME or len(words[-1]) == 1):
+        words.pop()
+    if not words or len(words) > 7 or any(w in _NOT_NAME for w in words):
+        return None
+    name = " ".join(words)
+    # a real name has a word of three letters or more; "IF OY" is noise
+    if not any(sum(c.isalpha() for c in w) >= 3 for w in words) or sum(c.isalpha() for c in name) < 4:
+        return None
+    return name
+
+
+def _sex(s: str) -> str | None:
+    s = s.upper()
+    if re.match(r"^\s*(LAKI[\s-]*LAKI|LELAKI|MALE|PRIA|M\b|L\b)", s):
+        return "M"
+    if re.match(r"^\s*(PEREMPUAN|FEMALE|WANITA|F\b|P\b)", s):
+        return "F"
+    return None
+
+
+def _nationality(s: str) -> str | None:
+    s = " ".join(re.sub(r"[^A-Z ]", " ", s.upper()).split())
+    for name in sorted(NATIONALITIES, key=len, reverse=True):
+        if re.match(rf"{name}\b", s):
+            return NATIONALITIES[name]
+    return None
+
+
+def holder(texts: list[str], today: date | None = None) -> dict:
+    """Name, date of birth, sex and nationality printed after their labels."""
+    today = today or date.today()
+    votes: dict[str, list] = {"full_name": [], "date_of_birth": [], "sex": [], "nationality": []}
+    for n, text in enumerate(texts):
+        weight = 2 if n == 0 else 1  # the first reading is the cleanest (RapidOCR)
+        lines = [ln for ln in text.upper().splitlines() if ln.strip()]
+        for i, line in enumerate(lines):
+            after = lines[i + 1] if i + 1 < len(lines) else ""
+            if m := _NAME_LABEL.match(line):
+                name = _clean_name(m.group(1)) or _clean_name(after)
+                if name:
+                    votes["full_name"] += [name] * weight
+            if m := _DOB_LABEL.search(line):
+                ds = [d for d in dates(m.group(1) or after) if d < today and today.year - d.year <= 110]
+                if ds:
+                    votes["date_of_birth"] += [ds[0].isoformat()] * weight
+            if m := _SEX_LABEL.search(line):
+                v = _value(m.group(1))
+                if sx := _sex(v) or (_sex(after) if not v else None):
+                    votes["sex"] += [sx] * weight
+            if m := _NAT_LABEL.search(line):
+                v = _value(m.group(1))
+                if nat := _nationality(v) or (_nationality(after) if not v else None):
+                    votes["nationality"] += [nat] * weight
+    return {k: max(set(v), key=v.count) for k, v in votes.items() if v}

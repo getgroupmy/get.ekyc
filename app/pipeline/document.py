@@ -173,6 +173,8 @@ def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, coun
             if nric:
                 extracted["id_number"] = nric["document_number"]
                 extracted.setdefault("date_of_birth", nric["date_of_birth"])
+                if nric.get("sex"):
+                    extracted.setdefault("sex", nric["sex"])
                 definitive = True
     elif document_type in ("refugee_card", "foreign_worker_card"):
         pattern = r"(?<!\d)\d{3}-\d{2}[A-Z]?-?\d{5,7}(?!\d)" if document_type == "refugee_card" else r"\b[A-Z]{1,2}\d{6,9}\b"
@@ -186,6 +188,11 @@ def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, coun
     else:
         definitive = _read_identity(res, extracted, sides, side_texts, all_texts, text, document_type, country,
                                     found_mrz, front)
+    # The holder's name and details from labelled fields, where the document's
+    # own reader (MyKad layout, MRZ) left them empty.
+    if meta.category in ("identity", "driver") and document_type not in ("visa", "medical_report"):
+        for k, v in fields.holder(all_texts, today).items():
+            extracted.setdefault(k, v)
     country = extracted.get("country") or country
 
     # 5. which country -----------------------------------------------------------

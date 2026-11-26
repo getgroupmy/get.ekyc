@@ -92,3 +92,12 @@ def test_client_downloads_own_photo_only(client, api_key):
     assert client.get(f"{BASE}/{v['id']}/media/document_back", headers=api_key).status_code == 404
     other = client.post("/admin/api/clients", json={"name": "other-dl"}, headers=ADMIN).json()
     assert client.get(f"{BASE}/{v['id']}/media/selfie", headers={"X-API-Key": other["api_key"]}).status_code == 404
+
+
+def test_page_steps_are_kept_for_tracing(client, api_key):
+    v = client.post(BASE, json={"test": True}, headers=api_key).json()
+    t = _token(v["hosted_url"])
+    assert client.post(f"/v1/hosted/{t}/event", json={"step": "doc_camera_failed", "detail": "NotAllowedError"}).status_code == 204
+    assert client.post(f"/v1/hosted/{t}/event", json={"step": "Bad Step!"}).status_code == 422
+    audit = client.get(f"/admin/api/verifications/{v['id']}", headers=ADMIN).json()["audit"]
+    assert any(a["action"] == "hosted.doc_camera_failed" and a["detail"] == "NotAllowedError" for a in audit)

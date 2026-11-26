@@ -144,7 +144,10 @@ def give_consent(token: str, body: ConsentIn, db: Session = Depends(get_db)):
 
 
 def _summary(det: dict) -> dict:
-    return {k: det.get(k) for k in ("name", "category", "needs_selfie", "needs_back", "readable")}
+    out = {k: det.get(k) for k in ("name", "category", "needs_selfie", "needs_back", "readable")}
+    if det.get("subtype") and det.get("document_type") == "national_id":
+        out["name"] = det["subtype"]  # "MyKad", "MyPR", "NRIC/FIN": what the person holds
+    return out
 
 
 @router.put("/{token}/media/{kind}")
@@ -194,6 +197,30 @@ async def submit(token: str, background: BackgroundTasks, db: Session = Depends(
         raise HTTPException(422, {"message": "missing required media", "missing": ["selfie"]})
     out = start_processing(db, v, "hosted", background)
     return {"state": out["status"]}
+
+
+class EventIn(BaseModel):
+    step: str
+    detail: str | None = None
+
+
+@router.post("/{token}/event", status_code=204)
+def event(token: str, body: EventIn, db: Session = Depends(get_db)):
+    """The page says which step the person reached (opened, consent, camera
+    open or failed, uploaded, submit). Kept in the verification's audit trail
+    so a check that stalls on a phone can be traced. At most 80 per check."""
+    from sqlalchemy import func as _f
+
+    from ..db import AuditLog
+    v = _by_token(db, token)
+    if not re.fullmatch(r"[a-z_]{2,40}", body.step):
+        raise HTTPException(422, "bad step")
+    n = db.scalar(select(_f.count()).select_from(AuditLog)
+                  .where(AuditLog.verification_id == v.id, AuditLog.action.like("hosted.%")))
+    if n >= 80:
+        return
+    detail = re.sub(r"[^\w .:/()-]", "", body.detail or "")[:200] or None
+    audit(db, "hosted", f"hosted.{body.step}", v.id, detail)
 
 
 @router.get("/{token}/status")

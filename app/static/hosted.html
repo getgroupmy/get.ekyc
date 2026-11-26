@@ -30,6 +30,8 @@
   .frame { position:relative; width:100%; aspect-ratio:3/4; background:#000; border-radius:14px; overflow:hidden; }
   .frame video, .frame img { width:100%; height:100%; object-fit:cover; display:block; }
   .frame video { transform:scaleX(-1); }
+  .frame.docview { aspect-ratio:4/3; } .frame.docview video { transform:none; }
+  .cardguide { position:absolute; left:7%; right:7%; top:50%; transform:translateY(-50%); aspect-ratio:1.586; border:3px solid rgba(255,255,255,.9); border-radius:14px; box-shadow:0 0 0 999px rgba(0,0,0,.35); }
   .oval { position:absolute; inset:12% 18% 18%; border:3px solid rgba(255,255,255,.85); border-radius:50%; box-shadow:0 0 0 999px rgba(0,0,0,.35); }
   .cue { position:absolute; left:0; right:0; bottom:10px; text-align:center; color:#fff; font-weight:700; font-size:20px; text-shadow:0 1px 3px #000; }
   .count { position:absolute; top:10px; right:14px; color:#fff; font-size:34px; font-weight:800; text-shadow:0 1px 3px #000; }
@@ -73,7 +75,7 @@ const T = {
     agree: "I agree to this", start: "Start",
     front: "Photograph the front", frontMsg: "Place the document on a dark, flat surface and fill the frame. No glare, no fingers over the text.",
     backSide: "Now the back", backMsg: "Turn the card over and take a photo of the back.",
-    takePhoto: "Take photo", gallery: "Choose from gallery", retake: "Retake", useIt: "Use this photo",
+    takePhoto: "Take photo", gallery: "Choose from gallery", fitCard: "Fit the card inside the frame", shutterDoc: "Capture", retake: "Retake", useIt: "Use this photo",
     uploading: "Uploading…", reading: "Reading the document…",
     seen: "We see: {d}", unclear: "We couldn't read this clearly. Retake in better light, or continue anyway.",
     selfie: "Now your face", selfieMsg: "We'll take a selfie and ask you to turn your head. Remove glasses and hats; find good light.",
@@ -95,7 +97,7 @@ const T = {
     agree: "Saya bersetuju", start: "Mula",
     front: "Ambil gambar bahagian depan", frontMsg: "Letakkan dokumen di atas permukaan rata yang gelap dan penuhkan bingkai. Elakkan silau dan jari menutup tulisan.",
     backSide: "Sekarang bahagian belakang", backMsg: "Terbalikkan kad dan ambil gambar bahagian belakang.",
-    takePhoto: "Ambil gambar", gallery: "Pilih dari galeri", retake: "Ambil semula", useIt: "Guna gambar ini",
+    takePhoto: "Ambil gambar", gallery: "Pilih dari galeri", fitCard: "Muatkan kad di dalam bingkai", shutterDoc: "Tangkap", retake: "Ambil semula", useIt: "Guna gambar ini",
     uploading: "Memuat naik…", reading: "Membaca dokumen…",
     seen: "Dikesan: {d}", unclear: "Kami tidak dapat membaca dengan jelas. Ambil semula di tempat lebih terang, atau teruskan.",
     selfie: "Sekarang wajah anda", selfieMsg: "Kami akan ambil swafoto dan minta anda memusingkan kepala. Tanggalkan cermin mata dan topi; cari tempat terang.",
@@ -147,6 +149,14 @@ const bridge = msg => {
   return false;
 };
 const embedded = () => !!(window.EkycBridge || window.webkit?.messageHandlers?.ekyc || window.EkycAndroid || window.ReactNativeWebView || window.parent !== window);
+// Which step the person reached, kept in the verification's audit trail so a
+// check that stalls on a phone can be traced in the console. Never blocks.
+const track = (step, detail) => { try {
+  fetch(base + "/event", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true,
+    body: JSON.stringify({ step, detail: detail ? String(detail).slice(0, 200) : null }) }).catch(() => {});
+} catch {} };
+// Android in-app web views ignore <input type=file> unless the app handles it.
+const androidInApp = () => embedded() && /Android/i.test(navigator.userAgent);
 const outcome = url => { try { const q = new URL(url).searchParams; return { verification_id: q.get("verification_id"), status: q.get("status") }; } catch { return {}; } };
 const leave = (url, status) => {
   if (bridge({ event: "ekyc.finished", verification_id: S?.verification_id, status: status || outcome(url).status || null })) return;
@@ -205,6 +215,7 @@ function welcome() {
     try {
       if (S.consent_needed) await call("/consent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accepted: true, lang }) });
       S.consent_needed = false;
+      track("consent");
       side("document_front");
     } catch (e) { fail(e, welcome); }
   }
@@ -219,13 +230,19 @@ function side(kind) {
     if (note) kids.push(h("div", { class: "note " + note.cls }, note.text));
     kids.push(h("div", { class: "spacer" }));
     if (busy) kids.push(h("div", { class: "spin" }), h("p", { class: "mute", style: "text-align:center" }, t(busy)));
-    else if (!shot) kids.push(h("button", { class: "btn", onclick: () => take(pick($("camDoc"))) }, t("takePhoto")),
-      h("button", { class: "btn alt", onclick: () => take(pick($("pickDoc"))) }, t("gallery")));
+    else if (!shot) kids.push(h("button", { class: "btn", onclick: camera }, t("takePhoto")),
+      androidInApp() ? null : h("button", { class: "btn alt", onclick: () => take(pick($("pickDoc"))) }, t("gallery")));
     else kids.push(h("button", { class: "btn", onclick: next }, t("useIt")),
       h("button", { class: "btn alt", onclick: () => { shot = null; note = null; render(); } }, t("retake")));
     show(...kids);
   };
   render();
+  async function camera() {
+    const blob = await liveDoc(kind);
+    if (blob === undefined) { track("doc_camera_unavailable", kind); return take(pick($("camDoc"))); }
+    if (blob) return take(Promise.resolve(blob));
+    render();
+  }
   async function take(p) {
     const file = await p; if (!file) return;
     try {
@@ -234,19 +251,54 @@ function side(kind) {
       shot = { url: URL.createObjectURL(blob) };
       if (kind === "document_front") busy = "reading", render();
       const out = await put(kind, blob);
+      track("uploaded", kind);
       busy = false;
       if (out.document) {
         doc = out.document;
         note = doc.readable === false ? { cls: "warn", text: t("unclear") } : doc.name ? { cls: "ok", text: "✓ " + t("seen", { d: doc.name }) } : null;
       }
       render();
-    } catch (e) { busy = false; shot = null; note = { cls: "bad", text: t("error", { e: e.message }) }; render(); }
+    } catch (e) { track("upload_failed", kind + ": " + e.message); busy = false; shot = null; note = { cls: "bad", text: t("error", { e: e.message }) }; render(); }
   }
   function next() {
     if (kind === "document_front" && (doc?.needs_back)) return side("document_back");
     const person = doc ? doc.needs_selfie !== false : S.needs_selfie !== false;
     person ? face() : submit();
   }
+}
+// The rear camera with a card guide. Resolves to a photo, null (cancelled) or
+// undefined (no camera here: the caller falls back to the file picker).
+async function liveDoc(kind) {
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: false,
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 2560 }, height: { ideal: 1440 } } });
+  } catch (e) { track("doc_camera_failed", e?.name || e); return undefined; }
+  track("doc_camera_open", kind);
+  const keep = render;
+  render = () => {};
+  return new Promise(resolve => {
+    const video = h("video", { autoplay: "", playsinline: "", muted: "" });
+    video.muted = true; video.srcObject = stream;
+    const stop = () => stream.getTracks().forEach(tr => tr.stop());
+    const finish = b => { stop(); render = keep; resolve(b); };
+    const snap = async () => {
+      let blob = null;
+      try { if (window.ImageCapture) blob = await new ImageCapture(stream.getVideoTracks()[0]).takePhoto(); } catch {}
+      if (!blob) {
+        const c = document.createElement("canvas");
+        c.width = video.videoWidth; c.height = video.videoHeight;
+        c.getContext("2d").drawImage(video, 0, 0);
+        blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.95));
+      }
+      finish(blob);
+    };
+    show(h("div", { class: "frame docview" }, video, h("div", { class: "cardguide" }), h("div", { class: "cue" }, t("fitCard"))),
+      h("div", { class: "spacer" }),
+      h("button", { class: "btn", onclick: snap }, t("shutterDoc")),
+      h("button", { class: "btn alt", onclick: () => finish(null) }, t("cancel")));
+    video.play().catch(() => {});
+  });
 }
 function face() {
   progress(3);
@@ -259,7 +311,8 @@ function face() {
   async function live() {
     let stream;
     try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 960 } }, audio: false }); }
-    catch { return manual(); }
+    catch (e) { track("face_camera_failed", e?.name || e); return manual(); }
+    track("face_camera_open");
     const video = h("video", { autoplay: "", playsinline: "", muted: "" }); video.muted = true; video.srcObject = stream;
     const cue = h("div", { class: "cue" }), count = h("div", { class: "count" });
     render = () => {};
@@ -305,14 +358,16 @@ function face() {
     render();
     try {
       for (let i = 0; i < cues.length; i++) await put(cues[i] === "selfie" ? "selfie" : "liveness_" + i, shots[i]);
+      track("face_uploaded", cues.length);
       submit();
-    } catch (e) { fail(e, face); }
+    } catch (e) { track("face_upload_failed", e.message); fail(e, face); }
   }
 }
 async function submit() {
   progress(4);
   render = () => show(h("div", { class: "spin" }), h("h1", { style: "text-align:center" }, t("checking")), h("p", { class: "mute", style: "text-align:center" }, t("checkingMsg")));
   render();
+  track("submit");
   try { await call("/submit", { method: "POST" }); }
   catch (e) { if (e.status !== 409) return fail(e, () => side("document_front")); }
   const until = Date.now() + 60000;
@@ -341,6 +396,7 @@ setLang(lang);
   try { S = await call(""); }
   catch (e) { return message("invalid", "invalidMsg", null, "🔗", "invalid"); }
   $("who").textContent = S.client || "";
+  track("opened", (embedded() ? "app " : "browser ") + (navigator.userAgent.match(/Android|iPhone|iPad|Macintosh|Windows/)?.[0] || "other"));
   $("foot").textContent = S.test ? t("test") : "";
   if (S.state === "expired") return message("expired", "expiredMsg", S.return_url, "⌛", "expired");
   if (S.state !== "created") return finish({ state: S.state, return_url: S.return_url });
