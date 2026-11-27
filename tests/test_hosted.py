@@ -101,3 +101,11 @@ def test_page_steps_are_kept_for_tracing(client, api_key):
     assert client.post(f"/v1/hosted/{t}/event", json={"step": "Bad Step!"}).status_code == 422
     audit = client.get(f"/admin/api/verifications/{v['id']}", headers=ADMIN).json()["audit"]
     assert any(a["action"] == "hosted.doc_camera_failed" and a["detail"] == "NotAllowedError" for a in audit)
+
+
+def test_a_selfie_as_the_document_is_called_out(client, api_key, need_models):
+    v = client.post(BASE, json={"test": True}, headers=api_key).json()  # auto
+    t = _token(v["hosted_url"])
+    client.post(f"/v1/hosted/{t}/consent", json={"accepted": True})
+    up = client.put(f"/v1/hosted/{t}/media/document_front", files=_jpeg_file(synth.jpeg(synth.selfie()))).json()
+    assert up["document"]["not_document"] is True and up["document"]["name"] is None

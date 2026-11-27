@@ -137,6 +137,21 @@ def read_rapid(img: np.ndarray, min_score: float = 0.6) -> str:
     return "\n".join(_spaces(" ".join(t for _, t in sorted(parts))) for _, _, parts in lines)
 
 
+# One Tesseract pass on a busy photo (a room, a fruit, a crowded screen) can run
+# for minutes on a loaded machine. A pass that takes longer is dropped: the other
+# readings still count, and the check goes on.
+TESSERACT_TIMEOUT_S = float(os.environ.get("EKYC_TESSERACT_TIMEOUT", "30") or 30)
+
+
+def _tess(img: np.ndarray, **kw) -> str:  # noqa: ANN003
+    try:
+        return pytesseract.image_to_string(img, timeout=TESSERACT_TIMEOUT_S, **kw)
+    except RuntimeError as exc:  # pytesseract's "Tesseract process timeout"
+        if "timeout" not in str(exc).lower():
+            raise
+        return ""
+
+
 def read_texts(img: np.ndarray) -> list[str]:
     """Several OCR readings of a card or document page: PP-OCR on the photo,
     then Tesseract once per cleanup pass."""
@@ -146,14 +161,14 @@ def read_texts(img: np.ndarray) -> list[str]:
         m = cache.setdefault(threshold, ink(img, threshold))
         if thicken:
             m = cv2.erode(m, np.ones((3, 3), np.uint8))
-        out.append(pytesseract.image_to_string(m, lang="eng", config=f"--psm {psm}"))
+        out.append(_tess(m, lang="eng", config=f"--psm {psm}"))
     return out
 
 
 def read_fine_print(img: np.ndarray) -> list[str]:
     """Two high-resolution readings for tiny print (a card serial): enlarged
     ink at two sizes, read as sparse text."""
-    return [pytesseract.image_to_string(ink(img, 0.55, w), lang="eng", config="--psm 11") for w in (2400, 3200)]
+    return [_tess(ink(img, 0.55, w), lang="eng", config="--psm 11") for w in (2400, 3200)]
 
 
 def read_text(img: np.ndarray) -> str:
@@ -196,5 +211,5 @@ def read_mrz_text(img: np.ndarray) -> str:
     # The MRZ sits at the bottom of the page; try tighter crops first.
     for top in (0.55, 0.0):
         g = _prep(img[int(h * top):], min_width=1600)
-        texts.append(pytesseract.image_to_string(g, lang=lang, config=cfg))
+        texts.append(_tess(g, lang=lang, config=cfg))
     return "\n\n".join(texts)

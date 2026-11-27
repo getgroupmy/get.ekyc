@@ -144,7 +144,9 @@ def give_consent(token: str, body: ConsentIn, db: Session = Depends(get_db)):
 
 
 def _summary(det: dict) -> dict:
-    out = {k: det.get(k) for k in ("name", "category", "needs_selfie", "needs_back", "readable")}
+    out = {k: det.get(k) for k in ("name", "category", "needs_selfie", "needs_back", "readable", "not_document")}
+    if out["not_document"]:
+        out["name"] = None  # nothing was recognised; do not name a guess
     if det.get("subtype") and det.get("document_type") == "national_id":
         out["name"] = det["subtype"]  # "MyKad", "MyPR", "NRIC/FIN": what the person holds
     return out

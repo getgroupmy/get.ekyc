@@ -118,6 +118,29 @@ def _recognisable(texts: list[str]) -> bool:
                 or "PASSPORT" in flat or "PASPORT" in flat or "<<" in flat)
 
 
+# Words printed on identity, driver and vehicle papers in Malaysia and beyond.
+# One of them, a date, or the document's own photo is enough to say "a document".
+_DOC_WORDS = re.compile(
+    r"\b(KAD|PENGENALAN|IDENTITY|IDENTIFICATION|IDENTITE|IDENTIDAD|CARD|PASSPORT|PASPORT|PASSEPORT|LESEN|LICEN[CS]E|"
+    r"DRIVING|MEMANDU|REPUBLIC|REPUBLIK|KINGDOM|KERAJAAN|GOVERNMENT|MALAYSIA|WARGANEGARA|NATIONALITY|NAMA|NAME|SURNAME|"
+    r"TARIKH|DATE|BIRTH|LAHIR|LELAKI|PEREMPUAN|SEX|ALAMAT|ADDRESS|NO\.?\s*K/P|KENDERAAN|VEHICLE|INSURANS|INSURANCE|"
+    r"TAKAFUL|POLISI|POLICY|SIJIL|CERTIFICATE|PERAKUAN|PEMERIKSAAN|INSPECTION|PERMIT|PERMIS|VISA|PENDAFTARAN|"
+    r"REGISTRATION|CHASSIS|CASIS|ENJIN|ENGINE|JPJ|PUSPAKOM|APAD|CUKAI|SAH|VALID|EXPIRY|TAMAT|ISSUED|DIKELUARKAN|"
+    r"KEDIAMAN|RESIDENCE|PEKERJA|WORKER|UNHCR|PELARIAN|REFUGEE|MEDICAL|PERUBATAN|KLINIK|CLINIC)\b")
+
+
+def looks_like_document(texts: list[str], doc_face, img: np.ndarray) -> bool:  # noqa: ANN001
+    """False for a photo or screenshot with nothing of a document on it: an
+    avatar, an app screen, a room, a blank or black frame. A face counts only
+    when it is document-sized (a selfie's face fills much of the picture)."""
+    flat = " ".join(texts).upper()
+    if _recognisable(texts) or _DOC_WORDS.search(flat) or fields.dates(flat) or fields.compact_dates(flat):
+        return True
+    if doc_face is not None:
+        return doc_face.box[2] < 0.3 * min(img.shape[:2])
+    return False
+
+
 def _turn_upright(img: np.ndarray) -> np.ndarray | None:
     """The image turned a quarter (either way) when that makes it recognisable."""
     import cv2
@@ -218,6 +241,13 @@ def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, coun
     else:
         definitive = _read_identity(res, extracted, sides, side_texts, all_texts, text, document_type, country,
                                     found_mrz, front)
+    # Nothing recognised: say so plainly when it is no document at all (a
+    # screenshot, a selfie, a room) rather than "could not read it clearly".
+    if type_source == "default" and not definitive and not found_mrz and not extracted.get("id_number") \
+            and not looks_like_document(side_texts[0], doc_face, front):
+        res.checks = [c for c in res.checks if c["name"] != "document_data"]
+        res.checks.append(check("document_data", FAIL, "not_a_document"))
+        extracted["not_a_document"] = True
     # The holder's name and details from labelled fields, where the document's
     # own reader (MyKad layout, MRZ) left them empty.
     if meta.category in ("identity", "driver") and document_type not in ("visa", "medical_report"):

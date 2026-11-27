@@ -24,4 +24,5 @@ def detect(data: bytes) -> dict:
         "needs_back": doc_type == "national_id" and ex.get("country") == "MYS",
         "readable": data_check.get("status") == "pass",
         "issue": data_check.get("code"),
+        "not_document": data_check.get("code") == "not_a_document",
     }

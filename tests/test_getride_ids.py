@@ -3,6 +3,7 @@ claimed details, a selfie, and the photos fetched back by the client (as
 ekyc-webhook does). What comes out must be enough for GET-Ride's checks."""
 import json
 
+import numpy as np
 import pytest
 
 from tests import synth
@@ -250,3 +251,53 @@ def test_short_keywords_are_not_found_across_words():
 def test_road_tax_expiry_from_real_readings(readings, start, expiry):
     s, e = fields.road_tax_dates(readings)
     assert (s.isoformat() if s else None, e.isoformat() if e else None) == (start, expiry)
+
+
+def _app_screenshot() -> bytes:
+    """A phone screen: a menu of an app, no document on it."""
+    from PIL import Image, ImageDraw
+    im = Image.new("RGB", (720, 1480), (250, 250, 250))
+    d = ImageDraw.Draw(im)
+    font = synth._font(synth.SANS, 40)
+    d.rectangle((0, 0, 720, 60), fill=(30, 30, 30))
+    for i, t in enumerate(["Home", "My bookings", "Wallet", "Promotions", "Help centre", "Log out"]):
+        d.text((60, 200 + i * 140), t, font=font, fill=(20, 20, 20))
+    return synth.jpeg(np.asarray(im)[:, :, ::-1].copy())
+
+
+@pytest.mark.parametrize("what", ["selfie", "screenshot", "blank"])
+def test_a_picture_that_is_no_document_says_so(what):
+    data = {"selfie": lambda: synth.jpeg(synth.selfie()), "screenshot": _app_screenshot,
+            "blank": lambda: synth.jpeg(np.full((900, 1300, 3), (180, 200, 215), np.uint8))}[what]()
+    res = document.analyze(images.decode(data), None, "auto", None, {})
+    dc = next(c for c in res.checks if c["name"] == "document_data")
+    assert (dc["status"], dc["code"]) == ("fail", "not_a_document"), (what, dc)
+    from app.reasons import describe
+    assert describe(["not_a_document"])[0]["message"].startswith("This isn't a document")
+
+
+def test_a_hard_to_read_document_is_still_a_document():
+    # An ID card whose number did not read: "couldn't read it clearly", not "not a document".
+    res = document.analyze(images.decode(synth.card_image(synth.face_bgr(), [
+        "REPUBLIC OF UTOPIA", "IDENTITY CARD", "Name", "ANNA ERIKSSON"])), None, "auto", None, {})
+    dc = next(c for c in res.checks if c["name"] == "document_data")
+    assert dc.get("code") != "not_a_document", dc
+    # and a known document chosen by the caller is never second-guessed this way
+    res = document.analyze(images.decode(synth.jpeg(synth.selfie())), None, "passport", None, {})
+    assert all(c.get("code") != "not_a_document" for c in res.checks)
+
+
+def test_a_tesseract_pass_that_runs_too_long_is_dropped(monkeypatch):
+    from app.pipeline import ocr
+
+    def slow(*a, **kw):
+        assert kw.get("timeout") == ocr.TESSERACT_TIMEOUT_S
+        raise RuntimeError("Tesseract process timeout")
+    monkeypatch.setattr(ocr.pytesseract, "image_to_string", slow)
+    assert ocr._tess(np.zeros((10, 10), np.uint8), lang="eng") == ""
+
+    def broken(*a, **kw):
+        raise RuntimeError("something else")
+    monkeypatch.setattr(ocr.pytesseract, "image_to_string", broken)
+    with pytest.raises(RuntimeError):
+        ocr._tess(np.zeros((10, 10), np.uint8), lang="eng")

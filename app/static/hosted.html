@@ -78,6 +78,7 @@ const T = {
     takePhoto: "Take photo", gallery: "Choose from gallery", fitCard: "Fit the card inside the frame", shutterDoc: "Capture", retake: "Retake", useIt: "Use this photo",
     uploading: "Uploading…", reading: "Reading the document…",
     seen: "We see: {d}", unclear: "We couldn't read this clearly. Retake in better light, or continue anyway.",
+    notDoc: "This isn't a document. Take a photo of your ID or document itself, not a screenshot or another picture.",
     selfie: "Now your face", selfieMsg: "We'll take a selfie and ask you to turn your head. Remove glasses and hats; find good light.",
     openCam: "Open camera", camFail: "The camera did not open. Allow camera access, or use the buttons below to take each photo.",
     center: "Look straight at the camera", left: "Turn your head to the left", right: "Turn your head to the right",
@@ -100,6 +101,7 @@ const T = {
     takePhoto: "Ambil gambar", gallery: "Pilih dari galeri", fitCard: "Muatkan kad di dalam bingkai", shutterDoc: "Tangkap", retake: "Ambil semula", useIt: "Guna gambar ini",
     uploading: "Memuat naik…", reading: "Membaca dokumen…",
     seen: "Dikesan: {d}", unclear: "Kami tidak dapat membaca dengan jelas. Ambil semula di tempat lebih terang, atau teruskan.",
+    notDoc: "Ini bukan dokumen. Ambil gambar kad pengenalan atau dokumen itu sendiri, bukan tangkapan skrin atau gambar lain.",
     selfie: "Sekarang wajah anda", selfieMsg: "Kami akan ambil swafoto dan minta anda memusingkan kepala. Tanggalkan cermin mata dan topi; cari tempat terang.",
     openCam: "Buka kamera", camFail: "Kamera tidak dapat dibuka. Benarkan akses kamera, atau guna butang di bawah untuk setiap gambar.",
     center: "Pandang tepat ke kamera", left: "Pusingkan kepala ke kiri", right: "Pusingkan kepala ke kanan",
@@ -232,7 +234,7 @@ function side(kind) {
     if (busy) kids.push(h("div", { class: "spin" }), h("p", { class: "mute", style: "text-align:center" }, t(busy)));
     else if (!shot) kids.push(h("button", { class: "btn", onclick: camera }, t("takePhoto")),
       androidInApp() ? null : h("button", { class: "btn alt", onclick: () => take(pick($("pickDoc"))) }, t("gallery")));
-    else kids.push(h("button", { class: "btn", onclick: next }, t("useIt")),
+    else kids.push(front && doc?.not_document ? null : h("button", { class: "btn", onclick: next }, t("useIt")),
       h("button", { class: "btn alt", onclick: () => { shot = null; note = null; render(); } }, t("retake")));
     show(...kids);
   };
@@ -255,7 +257,9 @@ function side(kind) {
       busy = false;
       if (out.document) {
         doc = out.document;
-        note = doc.readable === false ? { cls: "warn", text: t("unclear") } : doc.name ? { cls: "ok", text: "✓ " + t("seen", { d: doc.name }) } : null;
+        if (doc.not_document) track("not_a_document", kind);
+        note = doc.not_document ? { cls: "bad", text: t("notDoc") }
+          : doc.readable === false ? { cls: "warn", text: t("unclear") } : doc.name ? { cls: "ok", text: "✓ " + t("seen", { d: doc.name }) } : null;
       }
       render();
     } catch (e) { track("upload_failed", kind + ": " + e.message); busy = false; shot = null; note = { cls: "bad", text: t("error", { e: e.message }) }; render(); }

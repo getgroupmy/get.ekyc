@@ -13,6 +13,7 @@ MESSAGES = {
     "id_number_front_back_mismatch": "The number on the front of the card does not match the back.",
     "gender_mismatch": "The gender printed on the card does not match the IC number.",
     "no_machine_readable_data": "The document needs a manual check.",
+    "not_a_document": "This isn't a document. Take a photo of the identity document itself, not a screenshot or another picture.",
     "ocr_unavailable": "Text reading is unavailable; the document needs a manual check.",
     "document_expired": "The document has expired.",
     "underage": "The minimum age requirement is not met.",
