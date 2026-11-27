@@ -119,26 +119,45 @@ def _recognisable(texts: list[str]) -> bool:
 
 
 # Words printed on identity, driver and vehicle papers in Malaysia and beyond.
-# One of them, a date, or the document's own photo is enough to say "a document".
-_DOC_WORDS = re.compile(
-    r"\b(KAD|PENGENALAN|IDENTITY|IDENTIFICATION|IDENTITE|IDENTIDAD|CARD|PASSPORT|PASPORT|PASSEPORT|LESEN|LICEN[CS]E|"
-    r"DRIVING|MEMANDU|REPUBLIC|REPUBLIK|KINGDOM|KERAJAAN|GOVERNMENT|MALAYSIA|WARGANEGARA|NATIONALITY|NAMA|NAME|SURNAME|"
-    r"TARIKH|DATE|BIRTH|LAHIR|LELAKI|PEREMPUAN|SEX|ALAMAT|ADDRESS|NO\.?\s*K/P|KENDERAAN|VEHICLE|INSURANS|INSURANCE|"
-    r"TAKAFUL|POLISI|POLICY|SIJIL|CERTIFICATE|PERAKUAN|PEMERIKSAAN|INSPECTION|PERMIT|PERMIS|VISA|PENDAFTARAN|"
-    r"REGISTRATION|CHASSIS|CASIS|ENJIN|ENGINE|JPJ|PUSPAKOM|APAD|CUKAI|SAH|VALID|EXPIRY|TAMAT|ISSUED|DIKELUARKAN|"
-    r"KEDIAMAN|RESIDENCE|PEKERJA|WORKER|UNHCR|PELARIAN|REFUGEE|MEDICAL|PERUBATAN|KLINIK|CLINIC)\b")
+# Strong ones name a document; weak ones (name, date, valid…) also turn up on app
+# screens, so a screenshot needs a strong one.
+_STRONG_WORDS = re.compile(
+    r"\b(PENGENALAN|IDENTITY|IDENTIFICATION|IDENTITE|IDENTIDAD|PASSPORT|PASPORT|PASSEPORT|LESEN|LICEN[CS]E|DRIVING|"
+    r"MEMANDU|WARGANEGARA|NATIONALITY|KENDERAAN|VEHICLE|INSURANS|INSURANCE|TAKAFUL|POLISI|POLICY|SIJIL|CERTIFICATE|"
+    r"PERAKUAN|PEMERIKSAAN|INSPECTION|PENDAFTARAN|REGISTRATION|CHASSIS|CASIS|ENJIN|JPJ|PUSPAKOM|APAD|CUKAI|"
+    r"PERSENDI\w*|PERDAGANGAN|KEDIAMAN|RESIDENCE|PEKERJA|UNHCR|PELARIAN|REFUGEE|ZURICH|ALLIANZ|ETIQA|KURNIA|MSIG|"
+    r"TOKIO|BERJAYA|AMGENERAL|LONPAC|TUNE|SYARIKAT|BERHAD|BHD)\b")
+_WEAK_WORDS = re.compile(
+    r"\b(KAD|CARD|REPUBLIC|REPUBLIK|KINGDOM|KERAJAAN|GOVERNMENT|MALAYSIA|NAMA|NAME|SURNAME|TARIKH|DATE|BIRTH|LAHIR|"
+    r"LELAKI|PEREMPUAN|SEX|ALAMAT|ADDRESS|ENGINE|PERMIT|PERMIS|VISA|SAH|VALID|EXPIRY|TAMAT|ISSUED|DIKELUARKAN|"
+    r"WORKER|MEDICAL|PERUBATAN|KLINIK|CLINIC)\b")
+_PLATE = re.compile(r"\b[A-Z]{2,3}\s?\d{3,4}[A-Z]?\b")
+_LONG_NUMBER = re.compile(r"(?<!\d)\d{8,}(?!\d)")
+_PHONE_CLOCK = re.compile(r"^\W*\d{1,2}:\d{2}")  # a phone's status bar opens a screenshot
 
 
 def looks_like_document(texts: list[str], doc_face, img: np.ndarray) -> bool:  # noqa: ANN001
-    """False for a photo or screenshot with nothing of a document on it: an
-    avatar, an app screen, a room, a blank or black frame. A face counts only
-    when it is document-sized (a selfie's face fills much of the picture)."""
-    flat = " ".join(texts).upper()
-    if _recognisable(texts) or _DOC_WORDS.search(flat) or fields.dates(flat) or fields.compact_dates(flat):
+    """False for a picture with nothing of a document on it: an avatar or
+    selfie, an app screen, a room, a blank or black frame. Leans to True: a
+    plate, a long number, a date or document wording is enough."""
+    import cv2
+    small = cv2.resize(img, (64, 64), interpolation=cv2.INTER_AREA)
+    if float(small.std()) < 8:
+        return False  # one flat colour: blank, black, a covered lens
+    if _recognisable(texts):
         return True
-    if doc_face is not None:
-        return doc_face.box[2] < 0.3 * min(img.shape[:2])
-    return False
+    flat = " ".join(texts).upper()
+    if _STRONG_WORDS.search(flat):
+        return True
+    if texts and _PHONE_CLOCK.match(texts[0]):
+        return False  # a screenshot of an app, no document wording on it
+    if _WEAK_WORDS.search(flat) or _PLATE.search(flat) or _LONG_NUMBER.search(flat) \
+            or fields.dates(flat) or fields.compact_dates(flat):
+        return True
+    # A face alone is a selfie or a photo of someone; on a document the
+    # first (PP-OCR) reading also finds real words around it (a name).
+    words = re.findall(r"[A-Za-z]{3,}", texts[0]) if texts else []
+    return doc_face is not None and (len(words) >= 3 or any(len(w) >= 5 for w in words))
 
 
 def _turn_upright(img: np.ndarray) -> np.ndarray | None:

@@ -301,3 +301,23 @@ def test_a_tesseract_pass_that_runs_too_long_is_dropped(monkeypatch):
     monkeypatch.setattr(ocr.pytesseract, "image_to_string", broken)
     with pytest.raises(RuntimeError):
         ocr._tess(np.zeros((10, 10), np.uint8), lang="eng")
+
+
+@pytest.mark.parametrize("text,face,want", [
+    ("6:21 75 Notifications > Help & Support > Chat With Admin > Preferences", False, False),  # app menu
+    ("3:21 CAR RENT Pickup Location Enter pickup location Start Date End Date", False, False),  # booking screen
+    ("10:53 34 Ride History Today Completed $10.50", False, False),
+    ("9:41 MyJPJ LESEN MEMANDU DRIVING LICENCE", False, True),  # a digital licence on the phone is a document
+    ("300-88-1186 VDT8692 2024", False, True),  # road tax sticker: a plate
+    ("122689470 Roadside Assistance", False, True),  # a long number
+    ("13 Aug 2023 20:10:31", False, True),  # a date: leave it to a person
+    ("oe x t 4 An i a", True, False),  # a selfie
+    ("JINGHAZALI", True, True),  # a card held in hand: a face and a name
+    ("", False, False),
+])
+def test_what_counts_as_a_document(text, face, want):
+    from types import SimpleNamespace
+    img = np.random.default_rng(0).integers(0, 255, (200, 300, 3)).astype(np.uint8)
+    f = SimpleNamespace(box=(10, 10, 40, 50)) if face else None
+    assert document.looks_like_document([text], f, img) is want
+    assert document.looks_like_document([text], f, np.zeros((200, 300, 3), np.uint8)) is False  # a black frame
