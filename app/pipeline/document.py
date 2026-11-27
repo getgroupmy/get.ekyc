@@ -107,6 +107,28 @@ def _mrz_fields(found: dict) -> dict:
     return out
 
 
+_NRIC_ANY = re.compile(r"(?<!\d)\d{6}-?\d{2}-?\d{4}(?!\d)")
+
+
+def _recognisable(texts: list[str]) -> bool:
+    """Something the readers can work with: known wording, an IC number, a
+    MyKad or passport heading, or a machine-readable zone."""
+    flat = " ".join(texts).upper()
+    return bool(catalog.by_wording(texts) or _NRIC_ANY.search(flat) or "KAD PENGENALAN" in flat
+                or "PASSPORT" in flat or "PASPORT" in flat or "<<" in flat)
+
+
+def _turn_upright(img: np.ndarray) -> np.ndarray | None:
+    """The image turned a quarter (either way) when that makes it recognisable."""
+    import cv2
+    for k in (cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE):
+        turned = cv2.rotate(img, k)
+        t = ocr.read_rapid(turned)
+        if t and _recognisable([t]):
+            return turned
+    return None
+
+
 def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, country: str | None,
             claimed: dict | None, today: date | None = None) -> DocumentResult:
     s = get_settings()
@@ -138,6 +160,14 @@ def analyze(front: np.ndarray, back: np.ndarray | None, document_type: str, coun
         return res
 
     side_texts = [ocr.read_texts(img) for img in sides]
+    # A card photographed sideways: no face found to turn it upright and nothing
+    # recognisable read. Try it turned a quarter each way.
+    if document_type == "auto" and doc_face is None and not _recognisable(side_texts[0]):
+        turned = _turn_upright(front)
+        if turned is not None:
+            front, doc_face = _find_portrait(turned)
+            sides[0] = front
+            side_texts[0] = ocr.read_texts(front)
     all_texts = [t for texts in side_texts for t in texts]
     text = "\n".join(all_texts)
 

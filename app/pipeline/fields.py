@@ -150,11 +150,16 @@ _RARE = {"A", "F", "G", "H", "I", "M"}
 def licence_classes(text: str) -> list[str]:
     """Classes printed after KELAS / CLASS (e.g. "D DA B2")."""
     found: list[str] = []
-    for line in text.upper().splitlines():
-        m = re.search(r"\b(?:KELAS|CLASS)\b\s*[:.]?\s*(.+)", line)
+    lines = text.upper().splitlines()
+    for i, line in enumerate(lines):
+        m = re.search(r"\b(?:KELAS|CLASS)\b\s*[:.]?\s*(.*)", line)
         if not m:
             continue
-        for tok in re.split(r"[\s,/]+", m.group(1)):
+        rest = re.sub(r"^[\s/:.]*(?:KELAS|CLASS)\b", "", m.group(1)).strip()
+        # "Kelas / Class" alone on its line: the classes are on the next one
+        if not any(t.strip(".") in _CLASSES for t in re.split(r"[\s,/]+", rest)) and i + 1 < len(lines):
+            rest = lines[i + 1]
+        for tok in re.split(r"[\s,/]+", rest):
             tok = tok.strip(".")
             # Rare classes (A, F, G, H, I, M) after common ones are usually OCR
             # noise from the photo next to the line.
@@ -304,3 +309,56 @@ def holder(texts: list[str], today: date | None = None) -> dict:
                 if nat := _nationality(v) or (_nationality(after) if not v else None):
                     votes["nationality"] += [nat] * weight
     return {k: max(set(v), key=v.count) for k, v in votes.items() if v}
+
+
+# --- a licence's holder, printed under the heading without a label ------------------------------
+_HEADINGS = ("LESEN MEMANDU", "DRIVING LICENCE", "DRIVING LICENSE", "LESEN VOKASIONAL", "VOCATIONAL LICENCE")
+
+
+def name_after_heading(texts: list[str]) -> str | None:
+    """The Malaysian licence prints the holder's name right under "LESEN MEMANDU
+    MALAYSIA / DRIVING LICENCE", before "Warganegara / Nationality"."""
+    votes: list[str] = []
+    for n, text in enumerate(texts):
+        lines = [ln.strip() for ln in text.upper().splitlines() if ln.strip()]
+        for i, line in enumerate(lines):
+            if not any(h in line for h in _HEADINGS):
+                continue
+            for nxt in lines[i + 1:i + 4]:
+                if any(h in nxt for h in _HEADINGS) or nxt in ("MALAYSIA",) or re.search(r"\d", nxt):
+                    continue
+                if name := _clean_name(nxt):
+                    votes += [name] * (2 if n == 0 else 1)
+                break
+    return max(set(votes), key=votes.count) if votes else None
+
+
+def address_after_label(texts: list[str]) -> str | None:
+    """Lines after "Alamat / Address", up to the next label or four lines."""
+    for text in texts:
+        lines = [ln.strip() for ln in text.upper().splitlines() if ln.strip()]
+        for i, line in enumerate(lines):
+            if re.match(r"^(ALAMAT|ADDRESS)\b", line):
+                parts = []
+                for nxt in lines[i + 1:i + 5]:
+                    if re.match(r"^(NO\.|KELAS|CLASS|TEMPOH|VALIDITY|JENIS|WARGANEGARA)", nxt):
+                        break
+                    parts.append(nxt)
+                if parts and re.search(r"\d{5}", " ".join(parts)):
+                    return ", ".join(parts)[:300]
+    return None
+
+
+def compact_dates(text: str) -> list[date]:
+    """Dates printed as runs of digits, DDMMYYYY (road tax: issued, start, expiry),
+    sometimes run together: "21072023 26072023 25072024" or "2611202225052023"."""
+    out = []
+    for run in re.findall(r"(?<!\d)(\d{8}(?:\d{8}){0,2})(?!\d)", text):
+        for k in range(0, len(run), 8):
+            d, mo, y = int(run[k:k + 2]), int(run[k + 2:k + 4]), int(run[k + 4:k + 8])
+            if 1990 <= y <= 2100:
+                try:
+                    out.append(date(y, mo, d))
+                except ValueError:
+                    pass
+    return out

@@ -175,3 +175,35 @@ def test_vocational_licence_reads_as_such():
     assert out["document_subtype"] == "Lesen Vokasional (PSV/GDL)"
     assert out["psv"] and out["gdl"] and out["ehailing"] and out["vocational"]
     assert out["expiry_date"] == "2024-07-26" and out["id_number"] == "900514105231"
+
+
+# --- the Malaysian licence and road tax as printed (made-up details) -------------------------
+def test_licence_name_classes_and_address_under_the_heading():
+    text = ["0105011\nJenis / Type : Kelas / Class:\nLESEN MEMANDU MALAYSIA\nDRIVING LICENCE\nALI BIN ABU\n"
+            "Warganegara / Nationality No. Pengenalan / Identity No.\nMALAYSIA 900514105231\nKelas / Class\nB2 D\n"
+            "Tempoh / Validity\n12/05/2022-03/05/2027\nAlamat / Address\n12 JALAN MAWAR 3\n43000 KAJANG\nSELANGOR"]
+    out = catalog.read("driving_licence", text, date(2026, 1, 1))
+    assert out["full_name"] == "ALI BIN ABU"
+    assert out["licence_classes"] == ["B2", "D"]
+    assert out["expiry_date"] == "2027-05-03" and out["id_number"] == "900514105231"
+    assert out["address"].startswith("12 JALAN MAWAR 3") and "43000 KAJANG" in out["address"]
+
+
+def test_road_tax_dates_and_holder_layout():
+    text = "2024\nABC1234 25 JUL 132128747\n0110021 Vqxyngr 21072023 26072023 25072024\n" \
+           "VEL02010 008664 XXXXX 1332SP AB RM70.00\nSEMENANJUNG PERSENDIRIAN"
+    assert catalog.by_wording([text]) == "road_tax"  # no title: recognised by its layout
+    out = catalog.read("road_tax", [text], date(2024, 1, 1))
+    assert out["start_date"] == "2023-07-26" and out["expiry_date"] == "2024-07-25"
+    stuck = "LESEN KENDERAAN MOTO\n0110011 ZZYqwbK 22112022 2611202225052023\nSEMENANJUNG PERSENDIRIAN"
+    assert catalog.read("road_tax", [stuck], date(2023, 1, 1))["expiry_date"] == "2023-05-25"
+
+
+def test_a_sideways_licence_is_turned_upright():
+    import cv2
+    img = images.decode(synth.card_image(synth.face_bgr(), [
+        "LESEN VOKASIONAL MALAYSIA", "MALAYSIAN VOCATIONAL LICENCE", "Name / Name", "ALI BIN ABU",
+        "No.KP./ I.D.:900514105231", "Tempoh / Valid Until", "28/06/2023-26/07/2027"]))
+    res = document.analyze(cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE), None, "auto", None, {}, today=date(2026, 1, 1))
+    assert res.extracted["document_type"] == "driving_licence", res.extracted
+    assert res.extracted.get("document_subtype") == "Lesen Vokasional (PSV/GDL)"

@@ -85,6 +85,12 @@ def by_wording(texts: list[str]) -> str | None:
     for tid in _ORDER:
         if any(w in flat or w.replace(" ", "") in tight for w in TYPES[tid].words):
             return tid
+    # Road tax in its holder: the title hidden, but the region and class line and
+    # the issued/start/expiry digits always show.
+    if re.search(r"\b(SEMENANJUNG|SABAH|SARAWAK|LABUAN)\b", flat) and \
+            re.search(r"\b(PERSENDIRIAN|PERDAGANGAN|KERAJAAN|PERSENDIRAN)\b", flat) and \
+            len(fields.compact_dates(flat)) >= 2:
+        return "road_tax"
     return None
 
 
@@ -139,6 +145,11 @@ def read(doc_type: str, texts: list[str], today: date | None = None) -> dict:
             out["usage_code"] = m.group(1)
     if doc_type == "road_tax":
         out.update(fields.validity(text, today))
+        # The sticker's own line: issued, start, expiry as DDMMYYYY runs
+        ds = fields.compact_dates(text)
+        if len(ds) >= 2 and ds[-1] > ds[-2]:
+            out.setdefault("start_date", ds[-2].isoformat())
+            out["expiry_date"] = ds[-1].isoformat()
         m = re.search(r"\b(AB|AD|AH)\b", text.upper())
         if m:
             out["usage_code"] = m.group(1)
@@ -177,6 +188,10 @@ def read(doc_type: str, texts: list[str], today: date | None = None) -> dict:
             out["id_number"] = ic  # JPJ keys a Malaysian licence by the holder's IC
         if n := fields.reference_number(text, ("NO. LESEN", "LICENCE NO", "LICENSE NO", "NO LESEN")):
             out["document_number"] = n
+        if name := fields.name_after_heading(texts):
+            out["full_name"] = name
+        if addr := fields.address_after_label(texts):
+            out["address"] = addr
     if doc_type in ("international_driving_permit", "medical_report"):
         out.update(fields.validity(text, today))
         if ic := fields.nric_in(text):
