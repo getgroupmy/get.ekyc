@@ -207,3 +207,30 @@ def test_a_sideways_licence_is_turned_upright():
     res = document.analyze(cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE), None, "auto", None, {}, today=date(2026, 1, 1))
     assert res.extracted["document_type"] == "driving_licence", res.extracted
     assert res.extracted.get("document_subtype") == "Lesen Vokasional (PSV/GDL)"
+
+
+def test_malaysian_ic_is_not_taken_for_a_foreign_number():
+    """A licence or vocational card's IC number must not become an Indian Aadhaar
+    or Japanese My Number just because it passes their check digit."""
+    from app.pipeline import idnumbers, mykad
+    seen = {}
+    for spec in idnumbers.SPECS:
+        if spec.country not in ("IND", "JPN"):
+            continue
+        for dob in range(900101, 900131):
+            for tail in range(1000, 1400):
+                n = f"{dob}10{tail}"
+                if mykad.parse_number(n) and idnumbers._hits(spec, [n]) and idnumbers._hits(spec, [n])[0]["valid_checksum"]:
+                    seen[spec.country] = n
+                    break
+            if spec.country in seen:
+                break
+    assert seen, "expected a collision to test with"
+    for n in seen.values():
+        assert idnumbers.read([f"No. Pengenalan / Identity No.\nMALAYSIA {n}"], None) is None
+        assert idnumbers.read([n], "IND" if n == seen.get("IND") else "JPN") is not None  # with the country, still read
+
+
+def test_short_keywords_are_not_found_across_words():
+    assert catalog.by_wording(["KAD PENGENALAN\nPEMASTAUTIN TETAP MALAYSIA\nKADIR BIN ALI"]) is None
+    assert catalog.by_wording(["SELANGOR LKS PERMIT"]) is None

@@ -327,6 +327,8 @@ def name_after_heading(texts: list[str]) -> str | None:
             for nxt in lines[i + 1:i + 4]:
                 if any(h in nxt for h in _HEADINGS) or nxt in ("MALAYSIA",) or re.search(r"\d", nxt):
                     continue
+                if _NAME_LABEL.match(nxt) or re.match(r"^(NAMA|NAME)\b", nxt.replace("/", " ")):
+                    break  # a labelled name: holder() reads it
                 if name := _clean_name(nxt):
                     votes += [name] * (2 if n == 0 else 1)
                 break

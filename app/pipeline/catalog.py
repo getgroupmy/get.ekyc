@@ -83,7 +83,9 @@ def by_wording(texts: list[str]) -> str | None:
     flat = _flat(texts)
     tight = flat.replace(" ", "")  # OCR often runs big titles together: LESENKENDERAANMOTOR
     for tid in _ORDER:
-        if any(w in flat or w.replace(" ", "") in tight for w in TYPES[tid].words):
+        # Run-together matching only for long multi-word titles: short words like
+        # IKAD would otherwise turn up across word boundaries ("...MALAYSIA KAD...").
+        if any(w in flat or (" " in w and len(w) >= 12 and w.replace(" ", "") in tight) for w in TYPES[tid].words):
             return tid
     # Road tax in its holder: the title hidden, but the region and class line and
     # the issued/start/expiry digits always show.

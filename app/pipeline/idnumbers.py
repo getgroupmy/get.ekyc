@@ -229,7 +229,11 @@ def read(texts: list[str], country: str | None) -> dict | None:
     for spec in specs:
         hits = _hits(spec, texts)
         if not country:
-            hits = [h for h in hits if h["valid_checksum"]]
+            # A 12-digit number that is a valid Malaysian IC (real birth date and
+            # place code) is that, not an Aadhaar or My Number that happens to
+            # pass their check digit: about one random number in ten does.
+            from . import mykad
+            hits = [h for h in hits if h["valid_checksum"] and not mykad.parse_number(h["number"])]
         if not hits:
             continue
         votes = Counter(h["number"] for h in hits)
