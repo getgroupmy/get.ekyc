@@ -85,8 +85,13 @@ def _rapid_engine():
             from rapidocr import EngineType, RapidOCR
             logging.getLogger("RapidOCR").setLevel(logging.WARNING)
             e = EngineType.OPENVINO if engine == "openvino" else EngineType.ONNXRUNTIME
-            _rapid = RapidOCR(params={"Det.engine_type": e, "Cls.engine_type": e, "Rec.engine_type": e,
-                                      "Global.log_level": "warning"})
+            params = {"Det.engine_type": e, "Cls.engine_type": e, "Rec.engine_type": e, "Global.log_level": "warning"}
+            # EKYC_OCR_THREADS: cap ONNX Runtime's threads (several workers on one machine);
+            # unset = all cores, right for the server, which reads one document at a time.
+            if (threads := os.environ.get("EKYC_OCR_THREADS", "")).isdigit() and int(threads) > 0:
+                params["EngineConfig.onnxruntime.intra_op_num_threads"] = int(threads)
+                params["EngineConfig.onnxruntime.inter_op_num_threads"] = 1
+            _rapid = RapidOCR(params=params)
         except Exception:  # noqa: BLE001 - not installed / no model: Tesseract alone
             _rapid_failed = True
     return _rapid

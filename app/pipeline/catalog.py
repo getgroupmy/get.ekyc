@@ -37,7 +37,9 @@ TYPES: dict[str, DocType] = {t.id: t for t in (
     # driver
     DocType("driving_licence", "Driving licence", "driver", True, True,
             ("LESEN MEMANDU", "DRIVING LICENCE", "DRIVING LICENSE", "DRIVER LICENSE", "DRIVER'S LICENSE",
-             "SURAT IZIN MENGEMUDI")),
+             "SURAT IZIN MENGEMUDI",
+             # PSV / GDL: the vocational licence taxi and e-hailing drivers carry
+             "LESEN VOKASIONAL", "VOCATIONAL LICENCE", "VOCATIONAL LICENSE")),
     DocType("international_driving_permit", "International driving permit", "driver", True, True,
             ("INTERNATIONAL DRIVING PERMIT", "CONVENTION ON ROAD TRAFFIC", "PERMIS INTERNATIONAL")),
     DocType("medical_report", "Medical report for PSV / GDL (JPJL8A)", "driver", False, False,
@@ -49,10 +51,15 @@ TYPES: dict[str, DocType] = {t.id: t for t in (
             ("SIJIL PEMILIKAN KENDERAAN", "VEHICLE OWNERSHIP CERTIFICATE", "KAD PENDAFTARAN KENDERAAN",
              "PEMUNYA BERDAFTAR")),
     DocType("road_tax", "Road tax (LKM)", "vehicle", False, False,
-            ("LESEN KENDERAAN MOTOR", "E-LKM", "MOTOR VEHICLE LICENCE", "MOTOR VEHICLE LICENSE")),
+            ("LESEN KENDERAAN MOTO", "E-LKM", "MOTOR VEHICLE LICENCE", "MOTOR VEHICLE LICENSE",
+             # the sticker's own line, when the big title is cut off or run together
+             "LKM INI DI CERMIN", "DI CERMIN KENDERAAN")),
     DocType("vehicle_insurance", "Motor insurance certificate / cover note", "vehicle", False, False,
             ("CERTIFICATE OF INSURANCE", "SIJIL INSURANS", "COVER NOTE", "NOTA PERLINDUNGAN",
-             "ROAD TRANSPORT ACT 1987", "THIRD PARTY RISKS", "SIJIL TAKAFUL", "CERTIFICATE OF TAKAFUL")),
+             "ROAD TRANSPORT ACT 1987", "THIRD PARTY RISKS", "SIJIL TAKAFUL", "CERTIFICATE OF TAKAFUL",
+             # policy schedules and e-cover notes as insurers send them
+             "POLICY SCHEDULE", "JADUAL POLISI", "POLISI MOTOR", "TYPE OF COVER", "PURCHASE OF TAKAFUL",
+             "PRIVATE CAR POLICY", "SUM INSURED", "JUMLAH DIINSURANSKAN")),
     DocType("ehailing_vehicle_permit", "E-hailing vehicle permit (EVP)", "vehicle", False, False,
             ("E-HAILING VEHICLE PERMIT", "PERMIT KENDERAAN E-HAILING", "AGENSI PENGANGKUTAN AWAM DARAT",
              "LEMBAGA PELESENAN KENDERAAN PERDAGANGAN")),
@@ -60,8 +67,9 @@ TYPES: dict[str, DocType] = {t.id: t for t in (
 )}
 
 # Wording checked in this order: the most specific documents first.
+# Insurance before licences: policies mention "a valid driving licence" in their small print.
 _ORDER = ("vehicle_inspection", "vehicle_registration", "road_tax", "medical_report", "international_driving_permit",
-          "driving_licence", "vehicle_insurance", "ehailing_vehicle_permit", "taxi_permit", "refugee_card",
+          "vehicle_insurance", "driving_licence", "ehailing_vehicle_permit", "taxi_permit", "refugee_card",
           "foreign_worker_card")
 
 IDENTITY_TYPES = tuple(t for t, d in TYPES.items() if d.category == "identity")
@@ -73,8 +81,9 @@ def _flat(texts: list[str]) -> str:
 
 def by_wording(texts: list[str]) -> str | None:
     flat = _flat(texts)
+    tight = flat.replace(" ", "")  # OCR often runs big titles together: LESENKENDERAANMOTOR
     for tid in _ORDER:
-        if any(w in flat for w in TYPES[tid].words):
+        if any(w in flat or w.replace(" ", "") in tight for w in TYPES[tid].words):
             return tid
     return None
 
@@ -157,6 +166,8 @@ def read(doc_type: str, texts: list[str], today: date | None = None) -> dict:
         if n := fields.reference_number(text, ("NO. PERMIT", "PERMIT NO", "NO PERMIT", "PERMIT NUMBER")):
             out["document_number"] = n
     if doc_type == "driving_licence":
+        if re.search(r"VOKASIONAL|VOCATIONAL", text.upper()):
+            out["document_subtype"] = "Lesen Vokasional (PSV/GDL)"
         out.update(fields.validity(text, today))
         cls = fields.licence_classes(text)
         if cls:

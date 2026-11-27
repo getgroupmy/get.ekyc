@@ -143,3 +143,35 @@ def test_holder_fields_from_labels():
                                                         "sex": "M", "nationality": "BGD"}
     assert fields.holder(["Nama : SITI BINTI ABU\nJenis Kelamin : PEREMPUAN"])["sex"] == "F"
     assert fields.holder(["NAME\nNO. 12345"]) == {}  # a label with no name after it
+
+
+# --- wording as OCR reads it on real driver and vehicle documents (made-up details) --------
+from app.pipeline import catalog  # noqa: E402
+
+
+@pytest.mark.parametrize("lines,want", [
+    (["365", "LESENKENDERAANMOTOR AKTA PENGANGKUTAN JALAN 1987", "Sila baca maklumat di muka sebelah sebelum",
+      "melekatkan LKM ini di cermin kenderaan anda", "ABC1234 11 JAN"], "road_tax"),
+    (["LESEN KENDERAAN MOTO", "maklumat di muka sebelah sebelum", "an LKM ini di cermin kenderaan anda 2023"], "road_tax"),
+    (["LESEN VOKASIONAL MALAYSIA", "MALAYSIAN VOCATIONAL LICENCE", "Name / Name", "ALI BIN ABU",
+      "No.KP./ I.D.:900514105231", "Tempoh / Valid Until", "28/06/2023-26/07/2024", "PSV D:TEKSI/KERETA SEWA/E-HAILING"],
+     "driving_licence"),
+    (["MOTOR POLICY SCHEDULE/JADUAL POLISI MOTOR", "Policy No./No. Polisi : 235-070-22-000000",
+      "The insured must hold a valid driving licence"], "vehicle_insurance"),
+    (["SOME INSURANCE BHD", "THE SCHEDULE", "Class of Policy PRIVATE CAR", "Type of Cover COMPREHENSIVE"], "vehicle_insurance"),
+    (["Zurich General Takaful Malaysia Berhad", "CONFIRMATION OF PURCHASE OF TAKAFUL", "Vehicle Registration No. ABC123"],
+     "vehicle_insurance"),
+    (["Notifications >", "Help & Support >", "Logout >"], None),  # an app screenshot is not a document
+])
+def test_real_world_wording(lines, want):
+    assert catalog.by_wording(["\n".join(lines)]) == want
+
+
+def test_vocational_licence_reads_as_such():
+    text = ["LESEN VOKASIONAL MALAYSIA\nMALAYSIAN VOCATIONAL LICENCE\nName / Name\nALI BIN ABU\n"
+            "No.KP./ I.D.:900514105231\nTempoh / Valid Until\n28/06/2023-26/07/2024\n"
+            "Jenis / Type : Kelas / Class:\nPSV D:TEKSI/TEKSI MEWAH/\nKERETA SEWA/E-HAILING\nGDL D:BTM <= 3500 KG"]
+    out = catalog.read("driving_licence", text, date(2024, 1, 1))
+    assert out["document_subtype"] == "Lesen Vokasional (PSV/GDL)"
+    assert out["psv"] and out["gdl"] and out["ehailing"] and out["vocational"]
+    assert out["expiry_date"] == "2024-07-26" and out["id_number"] == "900514105231"
