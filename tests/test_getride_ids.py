@@ -234,3 +234,19 @@ def test_malaysian_ic_is_not_taken_for_a_foreign_number():
 def test_short_keywords_are_not_found_across_words():
     assert catalog.by_wording(["KAD PENGENALAN\nPEMASTAUTIN TETAP MALAYSIA\nKADIR BIN ALI"]) is None
     assert catalog.by_wording(["SELANGOR LKS PERMIT"]) is None
+
+
+@pytest.mark.parametrize("readings,start,expiry", [
+    # the good reading first, then a garbled one that adds digit runs
+    (["2023\nABC4043\n0114011 PjwVIKe 10112022 1011202209112023\nVEL05003 000000 998SP AB RM20.00",
+      "0114011 10112022 1011202209112023 77777777 31129999"], "2022-11-10", "2023-11-09"),
+    (["2024\nTB84 25 JUL 132128747\n0110021 Vqxyngr 21072023 26072023 25072024"], "2023-07-26", "2024-07-25"),
+    # only the issue date as digits: the big "04 MEI" and the issue year
+    (["SEMENANJUNG VEL02502 5008611 206082 nzIjwDE 05052023 atkan LKM ini di cermin kenderaan anda\n"
+      "PERSENDIRIAN 1498 SP AB RM90.00 04 MEI 202"], "2023-05-05", "2024-05-04"),
+    # garbled digits; the big "25 DIS" with the year above it
+    (["2023\nVCN1405 25 DIS\n0114011 UAYm1 20122052"], None, "2023-12-25"),
+])
+def test_road_tax_expiry_from_real_readings(readings, start, expiry):
+    s, e = fields.road_tax_dates(readings)
+    assert (s.isoformat() if s else None, e.isoformat() if e else None) == (start, expiry)

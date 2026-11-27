@@ -364,3 +364,50 @@ def compact_dates(text: str) -> list[date]:
                 except ValueError:
                     pass
     return out
+
+
+_MY_MONTHS = {"JAN": 1, "FEB": 2, "MAC": 3, "MAR": 3, "APR": 4, "MEI": 5, "MAY": 5, "JUN": 6, "JUL": 7, "OGO": 8,
+              "AUG": 8, "SEP": 9, "OKT": 10, "OCT": 10, "NOV": 11, "DIS": 12, "DEC": 12}
+
+
+def road_tax_dates(texts: list[str]) -> tuple[date | None, date | None]:
+    """Start and expiry on a road tax sticker (LKM). Each OCR reading on its own:
+    the DDMMYYYY runs (issued, start, expiry) where expiry follows start by at
+    most 13 months; else the big printed day and month ("25 DIS") with the year
+    printed above it or taken from the issue date. Readings vote."""
+    from collections import Counter
+    votes: Counter = Counter()
+    for n, text in enumerate(texts):
+        w = 2 if n == 0 else 1
+        # garbled runs make dates like 2052: only those a road tax can carry
+        ds = [d for d in compact_dates(text) if 2015 <= d.year <= date.today().year + 2]
+        pair = None
+        for a, b in zip(ds, ds[1:]):
+            if 25 <= (b - a).days <= 400:
+                pair = (a, b)
+        if pair:
+            votes[pair] += w * 2
+            continue
+        up = text.upper()
+        m = re.search(r"\b(\d{1,2})\s*(" + "|".join(_MY_MONTHS) + r")\b", up)
+        if not m:
+            continue
+        day, mo = int(m.group(1)), _MY_MONTHS[m.group(2)]
+        years = [int(y) for y in re.findall(r"(?<!\d)(20[2-4]\d)(?!\d)", up)]
+        issued = ds[0] if ds else None
+        year = years[0] if years else (issued.year if issued else None)
+        if year is None:
+            continue
+        try:
+            exp = date(year, mo, day)
+        except ValueError:
+            continue
+        if issued and exp <= issued:
+            try:
+                exp = date(year + 1, mo, day)
+            except ValueError:
+                continue
+        votes[(issued if issued and issued < exp else None, exp)] += w
+    if not votes:
+        return None, None
+    return votes.most_common(1)[0][0]

@@ -147,11 +147,12 @@ def read(doc_type: str, texts: list[str], today: date | None = None) -> dict:
             out["usage_code"] = m.group(1)
     if doc_type == "road_tax":
         out.update(fields.validity(text, today))
-        # The sticker's own line: issued, start, expiry as DDMMYYYY runs
-        ds = fields.compact_dates(text)
-        if len(ds) >= 2 and ds[-1] > ds[-2]:
-            out.setdefault("start_date", ds[-2].isoformat())
-            out["expiry_date"] = ds[-1].isoformat()
+        # The sticker's own dates, reading by reading (see fields.road_tax_dates)
+        start, expiry = fields.road_tax_dates(texts)
+        if expiry:
+            out["expiry_date"] = expiry.isoformat()
+            if start:
+                out["start_date"] = start.isoformat()
         m = re.search(r"\b(AB|AD|AH)\b", text.upper())
         if m:
             out["usage_code"] = m.group(1)
