@@ -15,7 +15,7 @@ def compat_scale(cosine: float, threshold: float) -> float:
     return max(0.0, cosine / threshold * 0.8)
 from . import catalog, document, images, integrity, liveness
 from . import face as facelib
-from .checks import FAIL, PASS, REVIEW, SKIPPED, check, overall
+from .checks import FAIL, PASS, REVIEW, SKIPPED, auto_approval, check, overall
 
 
 @dataclass
@@ -113,4 +113,9 @@ def run(media: dict[str, bytes], document_type: str, country: str | None, claime
 
     checks.append(integrity.edited_check(media))
     status, reasons = overall(checks, s.auto_approve)
+    if status == "approved":
+        gate = auto_approval(checks, doc.extracted)
+        checks.append(gate)
+        if gate["status"] != PASS:
+            status, reasons = "review", [gate["code"]]
     return Outcome(status, reasons, checks, doc.extracted, scores, selfie_emb, doc.document_number)

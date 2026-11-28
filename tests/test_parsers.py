@@ -1,5 +1,7 @@
 from datetime import date
 
+import pytest
+
 from app.pipeline import mrz, mykad
 from app.pipeline.checks import overall, check, FAIL, PASS, REVIEW
 from tests.synth import td3_lines
@@ -67,3 +69,30 @@ def test_overall_decision():
     assert overall([check("a", PASS)], False) == ("review", ["manual_approval_required"])
     assert overall([check("a", PASS), check("b", REVIEW, "x")], True) == ("review", ["x"])
     assert overall([check("a", REVIEW, "x"), check("b", FAIL, "y")], True) == ("rejected", ["y"])
+
+
+def _c(name, status="pass", code=None):
+    return {"name": name, "status": status, "code": code, "detail": {}}
+
+
+@pytest.mark.parametrize("source,kind,face,live,missing", [
+    ("mykad", "national_id", "pass", "pass", []),
+    ("mrz", "passport", "pass", "pass", []),
+    ("mrz", "residence_permit", "pass", "pass", []),
+    ("mrz", "visa", "pass", "pass", ["document_confirmed"]),
+    ("id_number", "national_id", "pass", "pass", ["document_confirmed"]),  # a foreign number, format only
+    (None, "driving_licence", "pass", "pass", ["document_confirmed"]),
+    (None, "refugee_card", "pass", "pass", ["document_confirmed"]),
+    ("mykad", "national_id", "skipped", "pass", ["face_match"]),
+    ("mykad", "national_id", "pass", None, ["liveness"]),
+    ("mrz", "passport", "review", "fail", ["face_match", "liveness"]),
+])
+def test_auto_approval_needs_confirmed_document_face_and_liveness(source, kind, face, live, missing):
+    from app.pipeline.checks import auto_approval
+    checks = [_c("document_data"), _c("face_match", face)] + ([_c("liveness", live)] if live else [])
+    gate = auto_approval(checks, {"source": source, "document_type": kind})
+    assert gate["detail"].get("missing", []) == missing
+    assert (gate["status"] == "pass") == (not missing)
+    # the document's own data check must have passed too
+    checks[0] = _c("document_data", "review", "id_number_uncertain")
+    assert "document_confirmed" in auto_approval(checks, {"source": source, "document_type": kind})["detail"]["missing"]

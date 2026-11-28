@@ -176,6 +176,12 @@ def run_case(case: Case) -> Outcome:
         r = runner.run(media, case.document_type, case.country, claimed or None, challenge)
         out.status, out.reasons, out.extracted = r.status, r.reasons, r.extracted
         out.checks = {c["name"]: c for c in r.checks}
+        # A case without head-turn frames can never pass the auto-approval gate on
+        # liveness alone; judge the rest of it as it would go with them.
+        gate = out.checks.get("auto_approval", {})
+        if challenge is None and out.status == "review" and out.reasons == ["manual_approval_required"] \
+                and gate.get("detail", {}).get("missing") == ["liveness"]:
+            out.status, out.reasons = "approved", ["liveness_not_in_case"]
         out.face_score = r.scores.get("face_match")
         out.selfie_emb = r.selfie_embedding
         front = images.decode(media["document_front"])

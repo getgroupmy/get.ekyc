@@ -61,12 +61,19 @@ def test_passport_approved_then_duplicate_then_erased(client, api_key, need_mode
         client.delete(f"{BASE}/{v['id']}", headers=api_key)
 
 
+def _gate(v):
+    return next(c for c in v["result"]["checks"] if c["name"] == "auto_approval")
+
+
 def _approved_then_duplicate(client, api_key, body, files, v):
-    assert v["status"] == "approved", v
+    # Everything confirmed but the head turns, which this test does not send:
+    # a person approves it (only MyKad / check digits + face + liveness go through alone).
+    assert v["status"] == "review" and v["reasons"] == ["manual_approval_required"], v
+    assert _gate(v)["detail"]["missing"] == ["liveness"]
     assert v["result"]["extracted"]["document_number"] == "L898902C3"
     assert v["result"]["extracted"]["full_name"] == "ANNA MARIA ERIKSSON"
     assert v["result"]["scores"]["face_match"] > 0.5
-    assert all(c["status"] in ("pass", "skipped") for c in v["result"]["checks"])
+    assert all(c["status"] in ("pass", "skipped") for c in v["result"]["checks"] if c["name"] != "auto_approval")
 
     # same passport under another account -> flagged for manual review
     dup = _run(client, api_key, {**body, "external_ref": "rider-2"}, files)
@@ -129,7 +136,7 @@ def test_mykad(client, api_key, need_models):
     v = _run(client, api_key, {"document_type": "national_id", "country": "MYS",
                                "claimed": {"full_name": "Anna binti Erik", "document_number": "900514105232"}},
              {"document_front": card, "selfie": synth.jpeg(synth.selfie())})
-    assert v["status"] == "approved", v
+    assert v["status"] == "review" and _gate(v)["detail"]["missing"] == ["liveness"], v
     ex = v["result"]["extracted"]
     assert ex["date_of_birth"] == "1990-05-14" and ex["sex"] == "F" and ex["place_of_birth"] == "Selangor"
 
@@ -233,7 +240,8 @@ def test_vehicle_document_needs_no_selfie(client, api_key, need_models):
     client.put(f"{BASE}/{vid}/media/document_front", files={"file": ("v.jpg", voc, "image/jpeg")}, headers=api_key)
     assert client.post(f"{BASE}/{vid}/submit", headers=api_key).status_code == 202
     v = client.get(f"{BASE}/{vid}", headers=api_key).json()
-    assert v["status"] == "approved", v["reasons"]
+    # read in full, but vehicle papers cannot be confirmed by the machine: a person approves
+    assert v["status"] == "review" and v["reasons"] == ["manual_approval_required"], v["reasons"]
     assert v["result"]["extracted"]["plate"] == "WXY1234"
     client.delete(f"{BASE}/{vid}", headers=api_key)
 
@@ -262,7 +270,7 @@ def test_reused_photo_under_another_user_goes_to_review(client, api_key, need_mo
     voc_lines = ["SIJIL PEMILIKAN KENDERAAN", "No. Pendaftaran: JKL 4321", "Tahun Dibuat: 2020"]
     first = synth.card_image(None, voc_lines)
     a = _run(client, api_key, {"document_type": "vehicle_registration", "external_ref": "owner-a"}, {"document_front": first})
-    assert a["status"] == "approved", a["reasons"]
+    assert a["status"] == "review" and a["reasons"] == ["manual_approval_required"], a["reasons"]
     # the same photo, shrunk and recompressed, sent for someone else
     img = cv2.imdecode(__import__("numpy").frombuffer(first, "uint8"), 1)
     again = cv2.imencode(".jpg", cv2.resize(img, None, fx=0.7, fy=0.7), [cv2.IMWRITE_JPEG_QUALITY, 70])[1].tobytes()

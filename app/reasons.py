@@ -35,7 +35,7 @@ MESSAGES = {
     "duplicate_face": "This person appears to be verified under another account.",
     "unreadable_image": "One of the images could not be read. Please retake it.",
     "processing_error": "The verification needs a manual check.",
-    "manual_approval_required": "Awaiting manual review.",
+    "manual_approval_required": "A person will check this verification. Only a MyKad or a passport (or an ID card with its machine-readable lines) with a matching face and completed head turns is approved automatically.",
     "document_details_changed": "This ID number was used before with a different name or date of birth.",
     "face_blocklisted": "This person cannot be verified. Please contact support.",
     "postcode_state_mismatch": "The postcode on the card does not belong to the state printed. A person will check it.",

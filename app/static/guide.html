@@ -239,7 +239,7 @@ await req.send();</code></pre>
   <pre><code>curl -s BASE/v1/verifications/$ID -H "X-API-Key: $EKYC_KEY"</code></pre>
   <table><thead><tr><th>status</th><th>Meaning</th><th>What your app does</th></tr></thead><tbody>
     <tr><td><code>processing</code></td><td>Still checking</td><td>Wait</td></tr>
-    <tr><td class="ok"><code>approved</code></td><td>All checks passed (or a reviewer approved)</td><td>Let the user continue</td></tr>
+    <tr><td class="ok"><code>approved</code></td><td>A reviewer approved it, or get.ekyc did on its own: that happens only when the document's details are confirmed by the machine (a MyKad's validated number, or the check digits of a passport or of an ID card with machine-readable lines), the selfie matches its photo and the head-turn liveness passed, with every other check clean. Anything else is <code>review</code> (<code>manual_approval_required</code>; the <code>auto_approval</code> check lists what was missing).</td><td>Approve the application at once</td></tr>
     <tr><td class="warn"><code>review</code></td><td>A person will decide</td><td>Show "We're checking your documents"; wait for the webhook</td></tr>
     <tr><td class="bad"><code>rejected</code></td><td>A check failed</td><td>Show <code>reason_details[].message</code>; offer a retake when the reason is about photo quality</td></tr>
   </tbody></table>
