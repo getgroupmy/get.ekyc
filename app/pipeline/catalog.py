@@ -51,7 +51,7 @@ TYPES: dict[str, DocType] = {t.id: t for t in (
             ("PUSPAKOM", "VR1", "LAPORAN PEMERIKSAAN KENDERAAN")),
     DocType("vehicle_registration", "Vehicle ownership certificate (VOC / geran)", "vehicle", False, False,
             ("SIJIL PEMILIKAN KENDERAAN", "VEHICLE OWNERSHIP CERTIFICATE", "KAD PENDAFTARAN KENDERAAN",
-             "PEMUNYA BERDAFTAR", "PEMILIKAN KENDERAAN", "SYARAT PENDAFTARAN")),
+             "PEMUNYA BERDAFTAR", "PEMILIKAN KENDERAAN")),
     DocType("road_tax", "Road tax (LKM)", "vehicle", False, False,
             ("LESEN KENDERAAN MOTO", "E-LKM", "MOTOR VEHICLE LICENCE", "MOTOR VEHICLE LICENSE",
              # the sticker's own line, when the big title is cut off or run together
@@ -89,6 +89,14 @@ _INSURANCE_VOCAB = re.compile(
     r"PREMIUM|INSURED|WINDSCREEN|POLICY|POLISI|ENDORSEMENT|INSURANCE|INSURANS)\b")
 
 
+def _road_tax_in_holder(flat: str) -> bool:
+    """Road tax in its holder: the title hidden, but the region and class line
+    and the issued/start/expiry digits always show."""
+    return bool(re.search(r"\b(S?EMENANJUNG|SABAH|SARAWAK|LABUAN)\b", flat)
+                and re.search(r"\b(PERSENDI\w*|PERDAGANGAN|KERAJAAN)\b", flat)
+                and len(fields.compact_dates(flat)) >= 2)
+
+
 def by_wording(texts: list[str]) -> str | None:
     flat = _flat(texts)
     tight = flat.replace(" ", "")  # OCR often runs big titles together: LESENKENDERAANMOTOR
@@ -97,20 +105,20 @@ def by_wording(texts: list[str]) -> str | None:
         # IKAD would otherwise turn up across word boundaries ("...MALAYSIA KAD...").
         if any(w in flat or (" " in w and len(w) >= 12 and w.replace(" ", "") in tight) for w in TYPES[tid].words):
             return tid
-    # Road tax in its holder: the title hidden, but the region and class line and
-    # the issued/start/expiry digits always show.
-    if re.search(r"\b(S?EMENANJUNG|SABAH|SARAWAK|LABUAN)\b", flat) and \
-            re.search(r"\b(PERSENDI\w*|PERDAGANGAN|KERAJAAN)\b", flat) and \
-            len(fields.compact_dates(flat)) >= 2:
+        # ...before the insurance words an insurer prints on the sticker's holder
+        if tid == "road_tax" and _road_tax_in_holder(flat):
+            return "road_tax"
+    # Only the plate and the issued/start/expiry run read: a road tax sticker is
+    # the one document that prints its dates as bare DDMMYYYY runs.
+    if fields.plate(flat) and fields.road_tax_dates(texts)[1] and \
+            any(len(fields.compact_dates(t)) >= 2 for t in texts):
         return "road_tax"
     # An insurance schedule read badly: no title survives, but its vocabulary does.
     if len(set(_INSURANCE_VOCAB.findall(flat))) >= 3:
         return "vehicle_insurance"
-    # ...or only the plate and the issued/start/expiry run read: a road tax
-    # sticker is the one document that prints its dates as bare DDMMYYYY runs.
-    if fields.plate(flat) and fields.road_tax_dates(texts)[1] and \
-            any(len(fields.compact_dates(t)) >= 2 for t in texts):
-        return "road_tax"
+    # The geran's conditions page, last: road tax is often printed on its back.
+    if "SYARAT PENDAFTARAN" in flat:
+        return "vehicle_registration"
     return None
 
 

@@ -338,6 +338,10 @@ def test_what_counts_as_a_document(text, face, want):
     # a schedule read badly: only its vocabulary survives
     (["ZURICH PRIUATE MATOR SCHEDULE COVER AGENT BERHAD"], "vehicle_insurance"),
     (["COVER ONLY"], None),
+    # road tax printed on the geran's back, and in an insurer's holder
+    (["Syarat Pendaftaran 1 Syarat Pendaftaran 2 LESEN KENDERAAN MOTOR VLC8296 29 OGO"], "road_tax"),
+    (["eTiQa Underwritten by Etiqa General Takaful Berhad KEX9160 26 OKT 2023 SEMENANJUNG PERSENDIRIAN "
+      "26102022 26102023"], "road_tax"),
     # not enough: a plate and one date
     (["VISITOR PARKING REVERSE PARKING ONLY SMH2924 13082023"], None),
 ])
