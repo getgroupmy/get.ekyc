@@ -39,7 +39,9 @@ TYPES: dict[str, DocType] = {t.id: t for t in (
             ("LESEN MEMANDU", "DRIVING LICENCE", "DRIVING LICENSE", "DRIVER LICENSE", "DRIVER'S LICENSE",
              "SURAT IZIN MENGEMUDI",
              # PSV / GDL: the vocational licence taxi and e-hailing drivers carry
-             "LESEN VOKASIONAL", "VOCATIONAL LICENCE", "VOCATIONAL LICENSE")),
+             "LESEN VOKASIONAL", "VOCATIONAL LICENCE", "VOCATIONAL LICENSE", "MALAYSIAN VOCATION",
+             # the card's edge cut off in the photo: "ESEN MEMANDU", "RIVING LICENCE"
+             "ESEN MEMANDU", "LESEN MEMAN", "RIVING LICEN", "DRIVING LICE")),
     DocType("international_driving_permit", "International driving permit", "driver", True, True,
             ("INTERNATIONAL DRIVING PERMIT", "CONVENTION ON ROAD TRAFFIC", "PERMIS INTERNATIONAL")),
     DocType("medical_report", "Medical report for PSV / GDL (JPJL8A)", "driver", False, False,
@@ -49,7 +51,7 @@ TYPES: dict[str, DocType] = {t.id: t for t in (
             ("PUSPAKOM", "VR1", "LAPORAN PEMERIKSAAN KENDERAAN")),
     DocType("vehicle_registration", "Vehicle ownership certificate (VOC / geran)", "vehicle", False, False,
             ("SIJIL PEMILIKAN KENDERAAN", "VEHICLE OWNERSHIP CERTIFICATE", "KAD PENDAFTARAN KENDERAAN",
-             "PEMUNYA BERDAFTAR")),
+             "PEMUNYA BERDAFTAR", "PEMILIKAN KENDERAAN", "SYARAT PENDAFTARAN")),
     DocType("road_tax", "Road tax (LKM)", "vehicle", False, False,
             ("LESEN KENDERAAN MOTO", "E-LKM", "MOTOR VEHICLE LICENCE", "MOTOR VEHICLE LICENSE",
              # the sticker's own line, when the big title is cut off or run together
@@ -59,7 +61,10 @@ TYPES: dict[str, DocType] = {t.id: t for t in (
              "ROAD TRANSPORT ACT 1987", "THIRD PARTY RISKS", "SIJIL TAKAFUL", "CERTIFICATE OF TAKAFUL",
              # policy schedules and e-cover notes as insurers send them
              "POLICY SCHEDULE", "JADUAL POLISI", "POLISI MOTOR", "TYPE OF COVER", "PURCHASE OF TAKAFUL",
-             "PRIVATE CAR POLICY", "SUM INSURED", "JUMLAH DIINSURANSKAN")),
+             "PRIVATE CAR POLICY", "SUM INSURED", "JUMLAH DIINSURANSKAN", "PERIOD OF INSURANCE",
+             "TEMPOH INSURANS", "RENEWAL SCHEDULE", "ENDORSEMENT SCHEDULE", "JADUAL PENGENDORSAN",
+             "STAMP DUTY PAID", "GENERAL TAKAFUL", "TAKAFUL AM", "MOTOR TAKAFUL", "COMPREHENSIVE PRIVATE",
+             "MAKE OF VEHICLE")),
     DocType("ehailing_vehicle_permit", "E-hailing vehicle permit (EVP)", "vehicle", False, False,
             ("E-HAILING VEHICLE PERMIT", "PERMIT KENDERAAN E-HAILING", "AGENSI PENGANGKUTAN AWAM DARAT",
              "LEMBAGA PELESENAN KENDERAAN PERDAGANGAN")),
@@ -79,6 +84,11 @@ def _flat(texts: list[str]) -> str:
     return " ".join(" ".join(t.upper().split()) for t in texts)
 
 
+_INSURANCE_VOCAB = re.compile(
+    r"\b(COVER|CONTRIBUTION|PARTICIPANT|EXCESS|COMPREHENSIVE|TAKAFUL|SCHEDULE|JADUAL|AGENT|EJEN|CLAIMS|BENEFITS|"
+    r"PREMIUM|INSURED|WINDSCREEN|POLICY|POLISI|ENDORSEMENT|INSURANCE|INSURANS)\b")
+
+
 def by_wording(texts: list[str]) -> str | None:
     flat = _flat(texts)
     tight = flat.replace(" ", "")  # OCR often runs big titles together: LESENKENDERAANMOTOR
@@ -89,9 +99,17 @@ def by_wording(texts: list[str]) -> str | None:
             return tid
     # Road tax in its holder: the title hidden, but the region and class line and
     # the issued/start/expiry digits always show.
-    if re.search(r"\b(SEMENANJUNG|SABAH|SARAWAK|LABUAN)\b", flat) and \
-            re.search(r"\b(PERSENDIRIAN|PERDAGANGAN|KERAJAAN|PERSENDIRAN)\b", flat) and \
+    if re.search(r"\b(S?EMENANJUNG|SABAH|SARAWAK|LABUAN)\b", flat) and \
+            re.search(r"\b(PERSENDI\w*|PERDAGANGAN|KERAJAAN)\b", flat) and \
             len(fields.compact_dates(flat)) >= 2:
+        return "road_tax"
+    # An insurance schedule read badly: no title survives, but its vocabulary does.
+    if len(set(_INSURANCE_VOCAB.findall(flat))) >= 3:
+        return "vehicle_insurance"
+    # ...or only the plate and the issued/start/expiry run read: a road tax
+    # sticker is the one document that prints its dates as bare DDMMYYYY runs.
+    if fields.plate(flat) and fields.road_tax_dates(texts)[1] and \
+            any(len(fields.compact_dates(t)) >= 2 for t in texts):
         return "road_tax"
     return None
 

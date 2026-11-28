@@ -321,3 +321,25 @@ def test_what_counts_as_a_document(text, face, want):
     f = SimpleNamespace(box=(10, 10, 40, 50)) if face else None
     assert document.looks_like_document([text], f, img) is want
     assert document.looks_like_document([text], f, np.zeros((200, 300, 3), np.uint8)) is False  # a black frame
+
+
+@pytest.mark.parametrize("readings,want", [
+    (["ESEN MEMANDU MALAYSIA RIVING LICENCE ALI BIN ABU"], "driving_licence"),  # card edge cut off
+    (["MALAYSIAN VOCATION D:BTM <= 3500 KG KERETA SEWA/E-HAILING"], "driving_licence"),
+    (["Syarat Pendaftaran 3 Syarat Pendaftaran 2 Syarat Pendaftaran 1"], "vehicle_registration"),  # geran, back
+    (["STLPEMILIKAN KENDERAAN JABATAN PENGANGKUTAN JALAN"], "vehicle_registration"),
+    (["No PERIOD OF INSURANCE POLICY NO SEATING CAPACITY VEHICLE BODY"], "vehicle_insurance"),
+    (["Allianz MOTOR ENDORSEMENT SCHEDULE JADUAL PENGENDORSAN MOTOR"], "vehicle_insurance"),
+    (["eTiQa RENEWAL SCHEDULE STAMP DUTY PAID General Takaful PARTICIPANT DETAILS"], "vehicle_insurance"),
+    # a road tax sticker where only the plate and its date run read
+    (["HBB7641 31JA 0114011 HXxgdBA 24022023 24022023 31012024 VEL02010"], "road_tax"),
+    (["PERSENDI 1495SP AH RM90 SEMENANJUNG 08082023 05082024"], "road_tax"),
+    (["ALLEL EMENANJUNG PERSENDIRIAN 21102022 21102022"], "road_tax"),  # region's first letter lost
+    # a schedule read badly: only its vocabulary survives
+    (["ZURICH PRIUATE MATOR SCHEDULE COVER AGENT BERHAD"], "vehicle_insurance"),
+    (["COVER ONLY"], None),
+    # not enough: a plate and one date
+    (["VISITOR PARKING REVERSE PARKING ONLY SMH2924 13082023"], None),
+])
+def test_wording_seen_on_real_documents(readings, want):
+    assert catalog.by_wording(readings) == want
