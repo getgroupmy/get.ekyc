@@ -118,6 +118,18 @@ def engine_number(text: str) -> str | None:
     return None
 
 
+def engine_after_chassis(text: str, chassis: str | None) -> str | None:
+    """The geran printout's value line "<chassis> / <engine>", under the one
+    label "NO. CHASIS/NO. ENJIN"."""
+    if not chassis:
+        return None
+    for line in text.upper().splitlines():
+        m = re.search(re.escape(chassis) + r"\s*/\s*([A-Z0-9-]{5,15})\b", line.replace(" " + chassis[-4:], chassis[-4:]))
+        if m and re.search(r"\d", m.group(1)) and m.group(1) != chassis:
+            return m.group(1)
+    return None
+
+
 def year_made(text: str) -> int | None:
     for line in text.upper().splitlines():
         if re.search(r"TAHUN\s*(DIBUAT|BUATAN)|YEAR\s*(OF\s*)?(MANUFACTURE|MADE)", line):

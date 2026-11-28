@@ -375,3 +375,11 @@ def test_vocational_class_lines_without_the_type_column():
 def test_an_ordinary_licence_is_not_read_as_vocational():
     out = catalog.read("driving_licence", ["LESEN MEMANDU MALAYSIA\nKelas / Class D B2\nNOTA: E:BAS SEKOLAH"])
     assert out["licence_classes"] == ["D", "B2"] and "vocational_classes" not in out
+
+
+def test_geran_printout_engine_number_after_the_chassis():
+    out = catalog.read("vehicle_registration", [
+        "SIJIL PEMILIKAN KENDERAAN\nBUATAN/NAMA MODEL NO. CHASIS/NO. ENJIN ALAMAT\n"
+        "01/02/2020 MOTOKAR / 2020 PERODUA MYVI 1.5 AV PM2B200S001234567 / 3SZ1234567 47100 PUCHONG"])
+    assert out["chassis_number"] == "PM2B200S001234567"
+    assert out["engine_number"] == "3SZ1234567"

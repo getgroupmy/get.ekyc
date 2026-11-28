@@ -146,7 +146,7 @@ def read(doc_type: str, texts: list[str], today: date | None = None) -> dict:
     if doc_type in ("vehicle_registration", "vehicle_inspection", "vehicle_insurance"):
         if c := fields.chassis(text):
             out["chassis_number"] = c
-        if e := fields.engine_number(text):
+        if e := fields.engine_number(text) or fields.engine_after_chassis(text, out.get("chassis_number")):
             out["engine_number"] = e
     if doc_type == "vehicle_registration":
         if y := fields.year_made(text):
