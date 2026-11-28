@@ -209,10 +209,19 @@ def read(doc_type: str, texts: list[str], today: date | None = None) -> dict:
         if re.search(r"VOKASIONAL|VOCATIONAL", text.upper()):
             out["document_subtype"] = "Lesen Vokasional (PSV/GDL)"
         out.update(fields.validity(text, today))
+        # the readings one by one: a vocational line read whole in one of them
+        voc = fields.vocational_votes(texts) if re.search(r"VOKASIONAL|VOCATION|\bPS[VY]\b|\bGDL\b", text.upper()) else []
         cls = fields.licence_classes(text)
+        if voc:
+            out["vocational_classes"] = voc
+            cls = [f"{e['type']} {e['class']}" for e in voc]
         if cls:
             out["licence_classes"] = cls
         out.update(fields.licence_flags(text))
+        if voc:
+            out["psv"] = out["psv"] or any(e["type"] == "PSV" for e in voc)
+            out["gdl"] = out["gdl"] or any(e["type"] == "GDL" for e in voc)
+            out["ehailing"] = any(e["type"] == "PSV" and "E-HAILING" in e["covers"] for e in voc) or out["ehailing"]
         if ic := fields.nric_in(text):
             out["id_number"] = ic  # JPJ keys a Malaysian licence by the holder's IC
         if n := fields.reference_number(text, ("NO. LESEN", "LICENCE NO", "LICENSE NO", "NO LESEN")):

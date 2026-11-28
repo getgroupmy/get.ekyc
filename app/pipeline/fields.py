@@ -172,6 +172,65 @@ def licence_classes(text: str) -> list[str]:
     return found
 
 
+_VOC_LINE = re.compile(r"(?:\b(PS[VY]|GDL|GOL)\s*|(?<![A-Z]))([A-E][A-Z0-9]?)\s*[:;]\s*(.*)")
+_VOC_FIX = (("TEKST", "TEKSI"), ("TEKS1", "TEKSI"), ("HAILNG", "HAILING"), ("E HAILING", "E-HAILING"))
+
+
+def vocational_classes(text: str) -> list[dict]:
+    """What a vocational licence (Lesen Vokasional) allows, one entry per line:
+    "PSV D:TEKSI/TEKSI MEWAH/" + "KERETA SEWA/E-HAILING" on the next line,
+    "GDL D:BTM <= 3500 KG"."""
+    out: list[dict] = []
+    lines = [ln.strip() for ln in text.upper().splitlines()]
+    for i, line in enumerate(lines):
+        m = _VOC_LINE.search(line)
+        if not m:
+            continue
+        cls = m.group(2)
+        covers = m.group(3).strip()
+        if cls not in _CLASSES:
+            continue
+        if m.group(1):
+            kind = {"PSY": "PSV", "GOL": "GDL"}.get(m.group(1), m.group(1))
+        elif re.search(r"TEKS|SEWA|HAIL|BAS|VAN|MOTOKAR", covers):
+            kind = "PSV"  # "Kelas / Class D:TEKSI/…" with the PSV column not read
+        elif re.search(r"BTM|\bKG\b", covers):
+            kind = "GDL"
+        else:
+            continue
+        # a list ending in "/" goes on to the next line
+        if covers.endswith("/") and i + 1 < len(lines) and not _VOC_LINE.search(lines[i + 1]):
+            covers += lines[i + 1].strip()
+        for bad, good in _VOC_FIX:
+            covers = covers.replace(bad, good)
+        covers = re.sub(r"\s*/\s*", "/", covers).strip(" /")
+        entry = {"type": kind, "class": cls, "covers": covers[:80]}
+        if covers and not any(e["type"] == kind and e["class"] == cls for e in out):
+            out.append(entry)
+    return out
+
+
+_VOC_WORDS = re.compile(r"TEKSI|MEWAH|KERETA SEWA|E-HAILING|BAS|VAN|MOTOKAR|RINGAN|BTM|KG|LORI")
+
+
+def vocational_votes(texts: list[str]) -> list[dict]:
+    """vocational_classes over every reading: a type and class read in at least
+    two readings (or the only one that has any), worded as in its cleanest reading."""
+    from collections import Counter
+    per = [vocational_classes(t) for t in texts]
+    seen = Counter((e["type"], e["class"]) for entries in per for e in entries)
+    need = 2 if sum(1 for entries in per if entries) > 1 else 1
+    out = []
+    for key, n in seen.items():
+        if n < need:
+            continue
+        versions = [e["covers"] for entries in per for e in entries if (e["type"], e["class"]) == key]
+        best = max(versions, key=lambda c: (len(_VOC_WORDS.findall(c)), -len(re.findall(r"[^A-Z0-9 /<>=-]", c))))
+        out.append({"type": key[0], "class": key[1], "covers": best})
+    order = {"PSV": 0, "GDL": 1}
+    return sorted(out, key=lambda e: (order.get(e["type"], 2), e["class"]))
+
+
 def licence_flags(text: str) -> dict:
     t = text.upper()
     out = {}

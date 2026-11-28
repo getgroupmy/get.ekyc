@@ -347,3 +347,31 @@ def test_what_counts_as_a_document(text, face, want):
 ])
 def test_wording_seen_on_real_documents(readings, want):
     assert catalog.by_wording(readings) == want
+
+
+def test_vocational_licence_classes_and_ehailing():
+    readings = [
+        "LESEN VOKASIONAL MALAYSIA\nMALAYSIAN VOCATIONAL LICENCE\nJenis / Type: Kelas / Class:\n"
+        "PSV D:TEKSI/TEKSI MEWAH/\nKERETA SEWA/E-HAILING\nGDL D:BTM <= 3500 KG",
+        "LESEN VOKASIONAL MALAYSIA\nJenis / Type: Kelas / Class:\nPSY D:TEKST/TEKSI MEWAH/\nKERETA SEWA/E-HAILING\n"
+        "GDL D:BTM <= 3500 KG\nPSV G:TEKS MEWSN",  # noise read once is dropped
+    ]
+    out = catalog.read("driving_licence", readings)
+    assert out["licence_classes"] == ["PSV D", "GDL D"]
+    assert out["vocational_classes"] == [
+        {"type": "PSV", "class": "D", "covers": "TEKSI/TEKSI MEWAH/KERETA SEWA/E-HAILING"},
+        {"type": "GDL", "class": "D", "covers": "BTM <= 3500 KG"}]
+    assert out["psv"] and out["gdl"] and out["ehailing"]
+
+
+def test_vocational_class_lines_without_the_type_column():
+    out = catalog.read("driving_licence", [
+        "MALAYSIAN VOCATIONAL LICENCE\nJenis / Type: Kelas / Class D:TEKSI/TEKSI MEWAH/KERETA SEWA\n"
+        "E:BAS BTM > 7500 KG\nD:BTM <= 3500 KG"])
+    assert out["licence_classes"] == ["PSV D", "PSV E", "GDL D"]
+    assert not out["ehailing"]  # a taxi and bus PSV without E-HAILING printed
+
+
+def test_an_ordinary_licence_is_not_read_as_vocational():
+    out = catalog.read("driving_licence", ["LESEN MEMANDU MALAYSIA\nKelas / Class D B2\nNOTA: E:BAS SEKOLAH"])
+    assert out["licence_classes"] == ["D", "B2"] and "vocational_classes" not in out

@@ -310,6 +310,7 @@ async function verifyEkycWebhook(secret: string, ts: string, raw: string, sig: s
     <tr><td><code>start_date</code>, <code>expiry_date</code></td><td>Validity (licences, insurance, permits, passports)</td></tr>
     <tr><td><code>plate</code>, <code>chassis_number</code>, <code>engine_number</code>, <code>year_made</code>, <code>vehicle_age_years</code></td><td>Vehicle documents</td></tr>
     <tr><td><code>licence_classes</code>, <code>psv</code>, <code>gdl</code>, <code>ehailing</code></td><td>Driving licence</td></tr>
+    <tr><td><code>vocational_classes</code></td><td>Vocational licence (PSV / GDL): one <code>{type, class, covers}</code> per line, e.g. PSV D covering TEKSI/KERETA SEWA/E-HAILING. <code>ehailing</code> is true when the licence prints E-HAILING.</td></tr>
   </tbody></table>
 </section>
 
