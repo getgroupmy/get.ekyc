@@ -527,6 +527,28 @@ def delete_admin(username: str, db: Session = Depends(get_db), ctx: Ctx = Depend
     audit(db, ctx.actor, "admin.deleted", detail=a.username)
 
 
+# --- the improvement set (owner only) -------------------------------------------------------
+@router.get("/improvement")
+def improvement_summary(db: Session = Depends(get_db), ctx: Ctx = Depends(need("improvement.export"))):
+    from .. import improvement
+    return improvement.summary(db)
+
+
+@router.get("/improvement.zip")
+def improvement_download(limit: int = 500, db: Session = Depends(get_db),
+                         ctx: Ctx = Depends(need("improvement.export"))):
+    from .. import improvement
+    data, n = improvement.export_zip(db, max(1, min(limit, 2000)))
+    if not n:
+        raise HTTPException(404, "no real checks in the improvement window")
+    audit(db, ctx.actor, "improvement.exported", detail=f"{n} checks")
+    db.commit()
+    stamp = utcnow().strftime("%Y%m%d-%H%M")
+    return Response(data, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="ekyc-improvement-{stamp}.zip"',
+                             "Cache-Control": "no-store"})
+
+
 # --- version, one-tap update, change log ---------------------------------------------------
 @router.get("/system")
 def system_status(ctx: Ctx = Depends(need("system.update"))):

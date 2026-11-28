@@ -193,6 +193,12 @@
       <ul id="syswait"></ul>
       <p class="bar"><button class="btn" id="syscheck">Check for updates</button><button class="btn primary hide" id="sysgo">Update now</button><span id="sysmsg" class="mute"></span></p>
     </div>
+    <div class="card hide" id="impcard">
+      <h2>Improvement set</h2>
+      <p class="mute">Owners only. Real checks of the last <b id="impdays">7</b> days (not test runs, not erased ones), kept to measure and improve the engine: the photos and what get.ekyc made of them, with any reviewer's decision. The download holds personal data: keep it safe, use it only to improve get.ekyc, and delete it when done. Every download is in the audit trail.</p>
+      <p id="impsum" class="mute"></p>
+      <p class="bar"><button class="btn primary" id="impgo">Download</button><span id="impmsg" class="mute"></span></p>
+    </div>
     <div class="card">
       <h2>Changelog</h2>
       <p class="mute">Every version this server has run: updates from this page and from the terminal are both recorded.</p>
@@ -281,7 +287,29 @@ function changeList(changes) {
   return h("ul", {}, (changes || []).map(c => h("li", {}, h("b", {}, c.subject), " ", h("span", { class: "mute" }, `${c.commit} · ${when(c.date)}`),
     c.details ? h("details", {}, h("summary", { class: "mute" }, "details"), h("pre", {}, c.details)) : "")));
 }
+async function loadImprovement() {
+  $("impcard").classList.toggle("hide", !may("improvement.export"));
+  if (!may("improvement.export")) return;
+  try {
+    const s = await json("/improvement");
+    $("impdays").textContent = s.days;
+    $("impsum").textContent = s.days ? `${s.count} check(s) now: ` + Object.entries(s.by_status).map(([k, n]) => `${n} ${k}`).join(", ") +
+      (s.count ? " · " + Object.entries(s.by_type).map(([k, n]) => `${n} ${k}`).join(", ") : "") : "Switched off (EKYC_IMPROVEMENT_DAYS=0).";
+    $("impgo").disabled = !s.count;
+  } catch (e) { $("impsum").textContent = e.message; }
+}
+$("impgo").onclick = async () => {
+  $("impmsg").textContent = "Preparing…";
+  try {
+    const r = await api("/improvement.zip");
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const a = h("a", { href: URL.createObjectURL(await r.blob()), download: `ekyc-improvement-${new Date().toISOString().slice(0, 10)}.zip` });
+    document.body.append(a); a.click(); a.remove();
+    $("impmsg").textContent = "Downloaded.";
+  } catch (e) { $("impmsg").textContent = e.message; }
+};
 async function loadChanges() {
+  loadImprovement();
   $("syscard").classList.toggle("hide", !may("system.update"));
   const d = await json("/changelog");
   const v = d.current || {};

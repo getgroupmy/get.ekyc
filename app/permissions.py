@@ -25,12 +25,13 @@ PERMISSIONS = {
     "audit.view": "Check the audit trail",
     "admins.manage": "Create console users and set their roles",
     "system.update": "Update get.ekyc to the latest version",
+    "improvement.export": "Download the last days' real checks to improve the engine",
 }
 
 _ALL = set(PERMISSIONS)
 ROLES: dict[str, dict] = {
     "owner": {"perms": _ALL, "scope": "all", "label": "Owner: everything, including console users"},
-    "admin": {"perms": _ALL - {"admins.manage", "system.update"}, "scope": "all", "label": "Admin: everything except console users"},
+    "admin": {"perms": _ALL - {"admins.manage", "system.update", "improvement.export"}, "scope": "all", "label": "Admin: everything except console users"},
     "reviewer": {"perms": {"verifications.view", "media.view", "verifications.decide", "fraud.block",
                            "learning.view", "compliance.view"},
                  "scope": "all", "label": "Reviewer: review and decide cases; no API keys"},

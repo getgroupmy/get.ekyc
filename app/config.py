@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     max_upload_mb: int = 12
     session_ttl_minutes: int = 60  # unsubmitted sessions expire after this
     retention_days: int = 0  # 0 = keep; N = delete images N days after completion
+    # Real checks of the last N days are kept as the improvement set: the owner
+    # may download them to measure and improve the engine. Images are never
+    # purged before N days. 0 = no improvement set (and the notice says nothing).
+    improvement_days: int = 7
     sanctions_enabled: bool = True  # screen people against the UN (and MOHA CSV) lists
     sanctions_un_url: str = "https://scsanctions.un.org/resources/xml/en/consolidated.xml"
     test_retention_hours: int = 48  # test verifications are deleted entirely after this (0 = keep)

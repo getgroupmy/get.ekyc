@@ -349,6 +349,7 @@ curl -s -X DELETE BASE/v1/verifications/$ID -H "X-API-Key: $EKYC_KEY"   # erases
     <li><b>Sessions:</b> submit within <span class="ttl"></span> minutes of creating.</li>
     <li><b>Tests:</b> send <code>"test": true</code> while integrating; test runs are deleted after <span class="testHours"></span> hours.</li>
     <li><b>Consent:</b> record the user's consent (<code>consent</code>) before taking photos — biometrics are sensitive data under the PDPA.</li>
+    <li><b>Improvement set:</b> get.ekyc keeps real checks (photos and results) for 7 days to check and improve the accuracy of its checks; its own notice says so. If your app shows its own notice instead (you send <code>consent</code>), say the same there. A check you erase leaves the set at once.</li>
     <li><b>Privacy:</b> images and personal data are stored encrypted; delete a user's data with <code>DELETE</code> when they ask.</li>
     <li><b>Decisions:</b> a <code>review</code> is decided by a person; plan your app for a wait.</li>
     <li><b>Stability:</b> <code>/v1</code> only grows: new fields, document types and reason codes are added, nothing is renamed or removed. Ignore fields you do not know and act on <code>status</code>. A breaking change would come as <code>/v2</code>, with <code>/v1</code> kept running.</li>

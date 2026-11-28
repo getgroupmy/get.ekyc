@@ -262,9 +262,11 @@ def housekeeping() -> None:
             for v in db.scalars(old_tests):
                 delete_entirely(db, v, "system")
         if s.retention_days > 0:
+            # never before the improvement set's days are over
+            keep = max(s.retention_days, s.improvement_days)
             old = select(Verification).where(Verification.media_purged.is_(False),
                                              Verification.status.in_(("approved", "rejected")),
-                                             Verification.completed_at < now - timedelta(days=s.retention_days))
+                                             Verification.completed_at < now - timedelta(days=keep))
             for v in db.scalars(old):
                 purge_media(db, v)
                 audit(db, "system", "media.purged", v.id)

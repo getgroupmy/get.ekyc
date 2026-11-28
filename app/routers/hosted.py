@@ -34,7 +34,7 @@ from .verifications import start_processing, store_media
 
 router = APIRouter(prefix="/v1/hosted", tags=["hosted"])
 
-CONSENT_VERSION = "hosted-2026-11"
+CONSENT_VERSION = "hosted-2026-11b"
 CONSENT_TEXT = {
     "en": ("{client} uses GET eKYC to confirm who you are. You will photograph your identity document and "
            "take a selfie with a few head turns. We read the details on the document, compare your face with "
@@ -95,8 +95,16 @@ def return_url(v: Verification, state: str) -> str | None:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
 
 
+IMPROVEMENT_TEXT = {
+    "en": " GET eKYC also keeps them for {days} days to check and improve the accuracy of its checks, then that use ends.",
+    "ms": " GET eKYC juga menyimpannya selama {days} hari untuk menyemak dan meningkatkan ketepatan semakannya, kemudian penggunaan itu tamat.",
+}
+
+
 def _consent_text(v: Verification, lang: str) -> str:
-    return CONSENT_TEXT[lang].format(client=v.client.name if v.client else "This app")
+    text = CONSENT_TEXT[lang].format(client=v.client.name if v.client else "This app")
+    days = get_settings().improvement_days
+    return text + (IMPROVEMENT_TEXT[lang].format(days=days) if days > 0 and not v.is_test else "")
 
 
 @router.get("/{token}")
